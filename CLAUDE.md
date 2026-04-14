@@ -11,8 +11,14 @@ Both tools are built as Claude Code skills but the Python scripts work standalon
 
 ## Current State (as of 2026-04-13)
 
-- voice-check: functional, 90 tests passing. Stylometry module built (`voice-check/stylometry.py`) — function word frequencies, punctuation ratios, vocabulary richness (TTR, MATTR, Yule's K), sentence length distribution, Burrows' Delta distance. `--learn` mode integrated into writing_check.py.
-- Next priorities: perplexity scoring (needs MLX), then embedding similarity, then RST qualitative checks
+- voice-check: functional, 277 tests passing. All computational linguistics modules built:
+  - `stylometry.py` — function word frequencies, punctuation ratios, vocabulary richness, Burrows' Delta
+  - `perplexity.py` — per-sentence perplexity via MLX local models
+  - `embeddings.py` — sentence embedding similarity via fastembed
+  - Genre system — 8 genres with register-based threshold overrides in profile schema
+  - `--learn` mode integrates all three modules for post-revision profile updates
+  - SKILL.md rewritten around three-layer agent integration (style guide, contamination linter, learning loop)
+- Next priorities: test genre system in real writing sessions, tune genre thresholds from actual use
 - discourse-analysis: functional; active research project in `contexts/ai-slop.md` (12-text corpus on "ai slop" discourses, 7 findings accumulated)
 
 ## Project Index
@@ -24,14 +30,20 @@ cyborg-methodologies/
 ├── HANDOFF.md                        # Current state, next build priorities, pre-push checklist
 ├── .gitignore                        # Excludes profiles/*, .venv, contexts/ (privacy)
 ├── voice-check/
-│   ├── SKILL.md                      # Claude Code skill — generic paths (repo-safe)
+│   ├── SKILL.md                      # Claude Code skill — agent integration protocol, genre system
 │   ├── README.md                     # User-facing docs
-│   ├── writing_check.py              # Quantitative analysis + profile loading, calibration, --learn
+│   ├── writing_check.py              # Quantitative analysis + profile loading, calibration, --learn, --genre
 │   ├── stylometry.py                 # Voice fingerprinting: Burrows' Delta, function words, vocab richness
-│   ├── profiles/default.json         # Generic starter profile (loose thresholds)
+│   ├── perplexity.py                 # Per-sentence perplexity via MLX local models
+│   ├── embeddings.py                 # Sentence embedding similarity via fastembed
+│   ├── profiles/default.json         # Profile schema with genre overrides (8 genres)
 │   └── tests/
 │       ├── test_voice_profiles.py    # 19 profile/analysis tests
-│       └── test_stylometry.py        # 71 stylometry tests
+│       ├── test_stylometry.py        # 71 stylometry tests
+│       ├── test_perplexity.py        # 56 perplexity tests
+│       ├── test_embeddings.py        # 68 embeddings tests
+│       ├── test_genres.py            # 39 genre system tests
+│       └── test_integration.py       # 24 multi-module orchestration tests
 ├── discourse-analysis/
 │   ├── SKILL.md                      # Claude Code skill for /da
 │   ├── discourse_profile.py          # Quantitative NLP profiling (spacy, textstat, lexicalrichness)
@@ -50,11 +62,13 @@ cyborg-methodologies/
 
 | File | Why it matters |
 |---|---|
-| `HANDOFF.md` | Full current state, next build spec (stylometry module), pre-push checklist |
-| `voice-check/writing_check.py` | Canonical quantitative analysis engine; profile loading architecture |
+| `HANDOFF.md` | Full current state, next priorities, pre-push checklist |
+| `voice-check/writing_check.py` | Quantitative analysis engine; profile loading; `--genre` flag; `--learn` mode |
 | `voice-check/stylometry.py` | Voice fingerprinting engine; Burrows' Delta, calibration, learning loop |
-| `voice-check/profiles/default.json` | Profile JSON schema — extend with `stylometry` and `perplexity` sections |
-| `voice-check/SKILL.md` | Skill invocation protocol — generic paths for public repo |
+| `voice-check/perplexity.py` | Perplexity scoring via MLX; calibration and learning |
+| `voice-check/embeddings.py` | Sentence embeddings via fastembed; semantic drift detection |
+| `voice-check/profiles/default.json` | Profile JSON schema with 8 genre overrides, stylometry/perplexity/embeddings sections |
+| `voice-check/SKILL.md` | Agent integration protocol: style guide, contamination linter, learning loop, genre system |
 | `discourse-analysis/SKILL.md` | Full /da pipeline, anti-sycophancy protocols, research note format |
 | `contexts/ai-slop.md` | Active discourse analysis project with accumulated findings |
 
@@ -62,14 +76,18 @@ cyborg-methodologies/
 
 **Before editing writing_check.py**, read it in full — profile loading, calibration, and pattern application are tightly coupled. The profile JSON schema is the contract between Python and LLM layers.
 
-**Two-copy design for voice-check**: The maintainer's canonical script may live outside the repo. The repo copy is the public-safe snapshot. If you maintain a canonical copy elsewhere, sync from it before pushing. The maintainer's personal SKILL.md (local Claude Code skill) may have hardcoded paths — do not overwrite it from the repo version.
+**Skill directory**: All `.py` and `.md` files in `~/.claude/skills/voice-check/` are symlinks to this repo's `voice-check/` directory. The repo is the single source of truth. Profiles are local (not symlinked).
 
 **Privacy constraint**: Before any push, run a grep for personal identifiers (usernames, real names, local paths) from repo root. Must return nothing. Keep the specific grep pattern in your local HANDOFF.md, not in this public file.
 
 **contexts/ is gitignored** — research notes and project contexts contain accumulated findings and may contain corpus excerpts. Do not commit them.
 
-**Stylometry module** (`voice-check/stylometry.py`): Voice fingerprinting — function word frequencies, punctuation ratios, vocabulary richness, sentence length distribution, Burrows' Delta distance. Two modes: calibrate from samples (extends `--calibrate`), learn from revision pairs (`--learn first_draft.md final_draft.md`). Profile schema extension under `"stylometry"` key. Does NOT use the `apply_profile()` globals pattern — stylometry functions take the profile section as an argument.
+**Voice-check workflow**: The SKILL.md defines a three-layer agent integration protocol — not a linter the user runs manually. Agents load the voice profile before drafting, self-check and self-correct contamination silently, and offer the learning loop at session end. The user sees clean drafts, not reports.
+
+**Genre system**: Profile schema has a `genres` section with register-based threshold overrides. `apply_profile(profile, genre="research_paper")` merges genre overrides on top of base thresholds. Genre selection is usually obvious from context. Eight genres defined: academic_position, tech_position, edtech_position, grant_application, research_paper, blog_essay, social_media, professional_correspondence.
+
+**Computational linguistics modules** (`stylometry.py`, `perplexity.py`, `embeddings.py`): Each has calibrate/compute/compare/update functions. All participate in `--calibrate` and `--learn` with graceful fallback when dependencies are missing. None use the `apply_profile()` globals pattern — they take profile sections as arguments.
 
 **Discourse analysis skill**: Anti-sycophancy and confirmation bias resistance are methodological requirements, not preferences. Do not silently resolve ambiguous codings. The tension between frameworks IS the finding.
 
-**Install**: `pip install textstat nltk` (voice-check); add `spacy lexicalrichness scipy` for discourse-analysis. Run `python3 -m spacy download en_core_web_sm`.
+**Install**: `pip install textstat nltk` (voice-check core); add `numpy scipy` for stylometry, `mlx mlx-lm` for perplexity, `fastembed` for embeddings, `spacy lexicalrichness` for discourse-analysis. Run `python3 -m spacy download en_core_web_sm`.
