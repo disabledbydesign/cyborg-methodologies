@@ -432,6 +432,21 @@ def _format_perplexity_summary(
     return " ".join(parts)
 
 
+def _ema_alpha(revision_count: int) -> float:
+    """Three-tier alpha schedule for exponential moving average.
+
+    - Revisions 0-4:  max(0.20, 1/(count+2)) — learning fast
+    - Revisions 5-14: 0.10 — settling
+    - Revisions 15+:  0.05 — stable, still adapts
+    """
+    if revision_count < 5:
+        return max(0.2, 1.0 / (revision_count + 2))
+    elif revision_count < 15:
+        return 0.1
+    else:
+        return 0.05
+
+
 def update_profile_perplexity(
     profile: dict,
     first_draft_metrics: dict,
@@ -440,13 +455,8 @@ def update_profile_perplexity(
     """
     Update the profile's perplexity section from a revision pair.
 
-    Uses exponential moving average (EMA). Alpha is large early (rapid learning)
-    and shrinks as revision_count grows (stabilizing the profile over time).
-
-    Alpha schedule: max(0.2, 1 / (revision_count + 2))
-      - revision_count=0 → alpha=0.5
-      - revision_count=4 → alpha=0.167 (clamped to 0.2)
-      - revision_count=9 → alpha=0.2
+    Uses exponential moving average with three-tier alpha schedule
+    (see stylometry._ema_alpha for schedule details).
 
     Updates baseline_mean, baseline_stdev, baseline_variance, baseline_cv
     from the final draft's metrics. Does not mutate input dict.
@@ -461,7 +471,7 @@ def update_profile_perplexity(
         return profile
 
     revision_count = baseline.get("revision_count", 0)
-    alpha = max(0.2, 1.0 / (revision_count + 2))
+    alpha = _ema_alpha(revision_count)
 
     def ema(old_val, new_val):
         if math.isnan(old_val) or math.isnan(new_val):

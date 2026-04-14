@@ -596,6 +596,29 @@ def _format_comparison_summary(
 
 
 # ---------------------------------------------------------------------------
+# EMA alpha schedule (shared across modules)
+# ---------------------------------------------------------------------------
+
+def _ema_alpha(revision_count: int) -> float:
+    """Three-tier alpha schedule for exponential moving average.
+
+    Early revisions shape the profile quickly; later revisions barely
+    move it. This prevents a single outlier revision from distorting a
+    stable profile while still allowing gradual voice evolution.
+
+    - Revisions 0-4:  max(0.20, 1/(count+2)) — learning fast
+    - Revisions 5-14: 0.10 — settling
+    - Revisions 15+:  0.05 — stable, still adapts
+    """
+    if revision_count < 5:
+        return max(0.2, 1.0 / (revision_count + 2))
+    elif revision_count < 15:
+        return 0.1
+    else:
+        return 0.05
+
+
+# ---------------------------------------------------------------------------
 # Profile update: learning loop
 # ---------------------------------------------------------------------------
 
@@ -607,14 +630,13 @@ def update_profile_stylometry(
     """
     Update the profile's stylometry section from a revision pair.
 
-    Uses exponential moving average. Alpha is large early (profile learns
-    quickly from first few revisions) and shrinks as revision_count grows,
-    stabilizing the profile over time.
+    Uses exponential moving average with three-tier alpha schedule:
+    learning fast early, settling in the middle, stable long-term.
 
-    Alpha schedule: max(0.2, 1 / (revision_count + 2))
-    - revision_count=0 → alpha=0.5
-    - revision_count=4 → alpha=0.167 (clamped to 0.2)
-    - revision_count=9 → alpha=0.2
+    Alpha schedule:
+    - revision 0-4:   max(0.20, 1/(count+2))  — learning (0.50→0.20)
+    - revision 5-14:  0.10                     — settling
+    - revision 15+:   0.05                     — stable, still adapts
 
     Updates centroid_z (function word targets), punctuation_ratios,
     vocabulary_richness, and sentence_distribution. Does not mutate input.
@@ -629,7 +651,7 @@ def update_profile_stylometry(
         return profile
 
     revision_count = baseline.get("revision_count", 0)
-    alpha = max(0.2, 1.0 / (revision_count + 2))
+    alpha = _ema_alpha(revision_count)
 
     def ema(old_val, new_val):
         return round(alpha * new_val + (1 - alpha) * old_val, 6)

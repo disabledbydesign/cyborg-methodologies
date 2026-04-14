@@ -462,6 +462,25 @@ def _format_embedding_summary(
 
 
 # ---------------------------------------------------------------------------
+# EMA alpha schedule
+# ---------------------------------------------------------------------------
+
+def _ema_alpha(revision_count: int) -> float:
+    """Three-tier alpha schedule for exponential moving average.
+
+    - Revisions 0-4:  max(0.20, 1/(count+2)) — learning fast
+    - Revisions 5-14: 0.10 — settling
+    - Revisions 15+:  0.05 — stable, still adapts
+    """
+    if revision_count < 5:
+        return max(0.2, 1.0 / (revision_count + 2))
+    elif revision_count < 15:
+        return 0.1
+    else:
+        return 0.05
+
+
+# ---------------------------------------------------------------------------
 # Profile update: learning loop
 # ---------------------------------------------------------------------------
 
@@ -473,14 +492,8 @@ def update_profile_embeddings(
     """
     Update the profile's embeddings section from a revision pair.
 
-    Uses exponential moving average. Alpha is large early (profile learns
-    quickly from first few revisions) and shrinks as revision_count grows,
-    stabilising the profile over time.
-
-    Alpha schedule: max(0.2, 1 / (revision_count + 2))
-    - revision_count=0 → alpha=0.5
-    - revision_count=4 → alpha=0.167 (clamped to 0.2)
-    - revision_count=9 → alpha=0.2
+    Uses exponential moving average with three-tier alpha schedule
+    (see _ema_alpha for schedule details).
 
     Updates centroid (EMA toward final draft centroid, then re-normalises),
     mean_distance, and stdev_distance. Does not mutate input.
@@ -509,7 +522,7 @@ def update_profile_embeddings(
     )
 
     revision_count = baseline.get("revision_count", 0)
-    alpha = max(0.2, 1.0 / (revision_count + 2))
+    alpha = _ema_alpha(revision_count)
 
     # Update centroid via EMA, then normalise to unit vector
     old_centroid = np.array(baseline["centroid"])
