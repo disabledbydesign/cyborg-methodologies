@@ -154,12 +154,18 @@ def load_profile(profile_path: str) -> dict:
     return profile
 
 
-def apply_profile(profile: dict):
+def apply_profile(profile: dict, genre: str = None):
     """Override global patterns and thresholds from a loaded profile.
 
-    Note: the profile's 'qualitative' section is not used by this script.
-    It contains CDA checklist instructions consumed by the LLM running the
-    /voice-check skill. This script handles quantitative analysis only.
+    If genre is specified and exists in profile['genres'], genre-specific
+    threshold_overrides are merged on top of base thresholds (genre wins).
+
+    Note: the profile's 'qualitative' and 'genres.*.qualitative' sections
+    are not used by this script. They contain CDA checklist instructions
+    consumed by the LLM running the /voice-check skill. This script handles
+    quantitative analysis only.
+
+    Returns the genre's word_count_target if available, else None.
     """
     global HEDGE_WORDS, SELF_AGGRANDIZING, TOPIC_SENTENCE_STARTERS
     global LOGICAL_CONNECTORS, NARRATIVE_PADDING, CORPORATE_JARGON
@@ -183,7 +189,17 @@ def apply_profile(profile: dict):
     if "corporate_jargon" in patterns:
         CORPORATE_JARGON = patterns["corporate_jargon"]
 
-    thresholds = profile.get("thresholds", {})
+    # Build merged thresholds: base from profile, then genre overrides on top
+    thresholds = dict(profile.get("thresholds", {}))
+    genre_word_count_target = None
+
+    if genre and "genres" in profile:
+        genre_config = profile["genres"].get(genre)
+        if genre_config:
+            genre_word_count_target = genre_config.get("word_count_target")
+            genre_overrides = genre_config.get("threshold_overrides", {})
+            thresholds.update(genre_overrides)
+
     if "long_sentence_words" in thresholds:
         THRESH_LONG_SENT = thresholds["long_sentence_words"]
     if "rewrite_sentence_words" in thresholds:
@@ -212,6 +228,8 @@ def apply_profile(profile: dict):
         THRESH_JARGON_MAX = thresholds["corporate_jargon_max"]
     if "wordcount_over_pct" in thresholds:
         THRESH_WORDCOUNT_OVER = thresholds["wordcount_over_pct"] / 100.0
+
+    return genre_word_count_target
 
 
 # ---------------------------------------------------------------------------
@@ -433,7 +451,8 @@ def calibrate_from_samples(sample_dir: str, output_path: str = None):
                 "instruction": "Does each story have orientation, complication, evaluation, and result?"
             }
         ],
-        "_instructions": "This profile was auto-generated from your writing samples. To customize: (1) Edit 'profile.name' and 'profile.description'. (2) Add patterns specific to YOUR anti-patterns in the 'patterns' section. (3) Run /voice-check setup to have the LLM analyze your samples and generate custom qualitative checks. (4) Adjust thresholds after running the tool on a few drafts."
+        "genres": {},
+        "_instructions": "This profile was auto-generated from your writing samples. To customize: (1) Edit 'profile.name' and 'profile.description'. (2) Add patterns specific to YOUR anti-patterns in the 'patterns' section. (3) Run /voice-check setup to have the LLM analyze your samples and generate custom qualitative checks. (4) Configure genres with threshold overrides for each document type you write. (5) Adjust thresholds after running the tool on a few drafts."
     }
 
     if output_path is None:
@@ -1269,8 +1288,8 @@ def main():
     )
     parser.add_argument("file", nargs="?", help="Path to the draft file to analyze")
     parser.add_argument(
-        "--target", type=int, default=1200,
-        help="Target word count (default: 1200)"
+        "--target", type=int, default=None,
+        help="Target word count (default: 1200, or genre target if --genre specified)"
     )
     parser.add_argument(
         "--json", action="store_true", dest="output_json",
@@ -1287,6 +1306,11 @@ def main():
     parser.add_argument(
         "-o", "--output", type=str, default=None,
         help="Output path for generated profile (used with --calibrate)"
+    )
+    parser.add_argument(
+        "--genre", type=str, default=None,
+        help="Genre for threshold selection (e.g., research_paper, academic_position). "
+             "Uses genre-specific threshold overrides and word count target from profile."
     )
     parser.add_argument(
         "--learn", nargs=2, metavar=("FIRST_DRAFT", "FINAL_DRAFT"),
@@ -1326,17 +1350,33 @@ def main():
         sys.exit(1)
 
     # Load and apply voice profile if specified
+    genre_word_target = None
     if args.profile:
         if not os.path.isfile(args.profile):
             print(f"Error: Profile not found: {args.profile}", file=sys.stderr)
             sys.exit(1)
         profile = load_profile(args.profile)
-        apply_profile(profile)
+        genre_word_target = apply_profile(profile, genre=args.genre)
         profile_name = profile.get("profile", {}).get("name", os.path.basename(args.profile))
+        if args.genre:
+            genre_config = profile.get("genres", {}).get(args.genre)
+            if not genre_config:
+                available = list(profile.get("genres", {}).keys())
+                print(f"Warning: Genre '{args.genre}' not found in profile. "
+                      f"Available: {', '.join(available) if available else 'none'}. "
+                      f"Using base thresholds.", file=sys.stderr)
     else:
         profile_name = None
 
-    results = run_analysis(args.file, args.target)
+    # Target priority: explicit --target > genre word_count_target > default 1200
+    if args.target is not None:
+        target = args.target
+    elif genre_word_target is not None:
+        target = genre_word_target
+    else:
+        target = 1200
+
+    results = run_analysis(args.file, target)
 
     if results.get("empty"):
         print(f"\nFile has no body text (only headers or empty). Nothing to analyze.\n")

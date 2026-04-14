@@ -153,7 +153,7 @@ def _compute_single_perplexity(text: str, model, tokenizer) -> float:
         perp = math.exp(loss.mean().item())
 
         try:
-            mx.metal.clear_cache()
+            mx.clear_cache()
         except (AttributeError, Exception):
             pass
 
