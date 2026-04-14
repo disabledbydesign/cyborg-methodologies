@@ -1,0 +1,184 @@
+{
+  "profile": {
+    "name": "Universal Base",
+    "version": "1.0",
+    "description": "Universal English writing norms for human-AI collaborative writing. Ships with the voice-check skill. Provides permissive thresholds and diagnostic qualitative checks that work for any writer. Users build a personal profile on top of this base through calibration and use."
+  },
+
+  "patterns": {
+    "hedge_words": [
+      "\\bperhaps\\b",
+      "\\bpotentially\\b",
+      "(?<![A-Z])\\bmay\\b(?!\\s+\\d)",
+      "\\bmight\\b",
+      "\\bcould be\\b",
+      "\\bappears to\\b",
+      "\\bseems to\\b"
+    ],
+    "self_aggrandizing": [
+      "\\bgroundbreaking\\b",
+      "\\btransformative\\b",
+      "\\bunprecedented\\b",
+      "\\bmost significant\\b",
+      "\\bmost compelling\\b"
+    ],
+    "topic_sentence_starters": [
+      "(?:^|\\. +)This is\\b",
+      "(?:^|\\. +)These are\\b",
+      "(?:^|\\. +)That is\\b"
+    ],
+    "logical_connectors": [
+      "\\bhowever\\b",
+      "\\bmoreover\\b",
+      "\\bfurthermore\\b",
+      "\\badditionally\\b",
+      "\\bconsequently\\b"
+    ],
+    "narrative_padding": [
+      "\\bwhat happened next\\b",
+      "\\bit is worth noting\\b",
+      "\\bit should be noted\\b"
+    ],
+    "corporate_jargon": [
+      "\\bactionable insights?\\b",
+      "\\bleveraging\\b",
+      "\\bstakeholder engagement\\b",
+      "\\bthought leader(?:ship)?\\b",
+      "\\bsynerg(?:y|ies|istic)\\b",
+      "\\bimpactful\\b",
+      "\\binnovative solutions?\\b"
+    ]
+  },
+
+  "thresholds": {
+    "long_sentence_words": 45,
+    "rewrite_sentence_words": 60,
+    "long_sentence_max": 6,
+    "rewrite_sentence_max": 3,
+    "emdash_per_1000w": 20,
+    "emdash_insertion_words": 12,
+    "hedge_max": 2,
+    "self_aggrandizing_max": 0,
+    "topic_opener_max": 3,
+    "logical_connector_max": 5,
+    "narrative_padding_max": 0,
+    "product_description_max": 0,
+    "corporate_jargon_max": 0,
+    "wordcount_over_pct": 115
+  },
+
+  "qualitative": [
+    {
+      "id": "transitivity",
+      "category": "ideational",
+      "type": "diagnostic",
+      "name": "Process type in topic sentences",
+      "instruction": "Check the material:relational process ratio in topic sentences. Material processes (built, developed, carried, designed) position the author as someone who acts. Relational processes (This is, These are, X has Y) position the author as a category to be identified. Neither is inherently wrong, but a heavy reliance on relational processes in topic sentences often signals generic or passive writing. Note the ratio and any clusters."
+    },
+    {
+      "id": "concept_scope",
+      "category": "ideational",
+      "type": "diagnostic",
+      "name": "Architecture vs. vocabulary",
+      "instruction": "Are key concepts used as architecture (organizing a section — every example in the section demonstrates the concept) or just vocabulary (mentioned, maybe defined, then abandoned)? When a concept is introduced inline, developed inline, and then dropped, it produces density without structure. Concepts should either organize a section or be referenced briefly — not both at once."
+    },
+    {
+      "id": "theme_rheme",
+      "category": "textual",
+      "type": "prescriptive",
+      "name": "Given-new information structure",
+      "instruction": "New concepts in subject position force readers to parse unfamiliar framing while tracking the sentence simultaneously. Subjects should be simple and familiar: 'I,' anaphoric 'This' (referring back to something established), or a concept already introduced. New information goes in the predicate — what the sentence says about a known topic. Flag sentences where the grammatical subject introduces something the reader hasn't encountered yet."
+    },
+    {
+      "id": "front_loading",
+      "category": "textual",
+      "type": "prescriptive",
+      "name": "Front-loading detection",
+      "instruction": "Flag sentences where the grammatical subject is heavy (many words before the main verb) or introduces a concept not yet established in the text. AI-generated text tends to put 'important' framing in subject position because the statistical center of formal writing in the training data rewards syntactic prominence and density. Clear prose does the opposite: orient the reader with something known, then deliver the new claim at the end. Example — front-loaded: 'The finding that output format is the activation function for bias emerged from humanistic theory.' Given-new: 'Binary classification produces systematic false positives. That result came from humanistic theory, not calibration.'"
+    },
+    {
+      "id": "audience_aggrandizing",
+      "category": "interpersonal",
+      "type": "prescriptive",
+      "name": "Don't attribute beliefs to readers",
+      "instruction": "Flag sentences that assign missions, values, or beliefs to the reader or their institution. ('Your department's founding mission is to upend traditional approaches.' 'You value interdisciplinary collaboration.') This is fragile — if the attribution is wrong or oversimplified, trust collapses. Demonstrate alignment through intellectual engagement with the reader's work, not by announcing shared values."
+    },
+    {
+      "id": "one_sentence_one_move",
+      "category": "textual",
+      "type": "prescriptive",
+      "name": "One sentence, one move",
+      "instruction": "If a sentence introduces a second independent idea after completing its first, it should be split. Complexity should accumulate across sentences, not within them. A sentence that makes a claim AND introduces a new concept AND qualifies with a subordinate clause is doing three jobs. Flag sentences that do more than one structural job. Note: embedding (a clause within a clause) is different from multiple independent moves — a single complex sentence with one main point is fine."
+    },
+    {
+      "id": "collaborative_register",
+      "category": "interpersonal",
+      "type": "prescriptive",
+      "name": "Think alongside, don't announce alignment",
+      "instruction": "Does the text engage the reader's intellectual question so they arrive at conclusions themselves, or does it announce alignment confrontationally? The pattern to flag: 'Your department was created to upend X. I have been upending X.' This announces alignment rather than demonstrating it. The alternative: enter the intellectual conversation so the reader sees the fit themselves. Announcing is the default pattern for 'demonstrates fit' in AI-generated persuasive writing. Demonstrating through engagement is harder and more effective."
+    },
+    {
+      "id": "claim_evidence_binding",
+      "category": "structural",
+      "type": "prescriptive",
+      "name": "Claims need specific evidence",
+      "instruction": "Are claims followed by specific evidence in the same section, or do they float unanchored? Flag claims that rely on vague authority ('research shows,' 'studies have found') without citing specific work. Flag claims about impact or results that don't name the specific outcome. Every claim should be answerable: 'What's the evidence for that?' If the answer isn't in the same paragraph or the next, the claim is unanchored."
+    },
+    {
+      "id": "coherence_vs_cohesion",
+      "category": "structural",
+      "type": "prescriptive",
+      "name": "Real progression vs. surface connectors",
+      "instruction": "Mentally remove all transition words (however, moreover, furthermore, additionally, consequently). Does the argument still flow? If removing the connectors breaks the logic, the text has cohesion (glue words) without coherence (actual logical progression). The paragraphs may be a list disguised as an argument. Genuine progression means each paragraph's conclusion creates the condition for the next paragraph's opening."
+    },
+    {
+      "id": "referential_strategy",
+      "category": "interpersonal",
+      "type": "diagnostic",
+      "name": "Actor vs. category",
+      "instruction": "How is the author positioned? As someone who does things ('I built,' 'I developed,' 'I carried this into') or as a type to be identified ('My research demonstrates,' 'As a scholar of X,' 'My background includes')? Actor-positioning uses material processes and concrete verbs. Category-positioning uses relational processes and abstract nouns. Note which pattern dominates — the user's profile may prescribe a preference."
+    },
+    {
+      "id": "argumentation_topoi",
+      "category": "interpersonal",
+      "type": "diagnostic",
+      "name": "Authority vs. consequence",
+      "instruction": "Does the text lead with authority (credentials, publication list, years of experience) or consequence (what happened, what it produced, what it means)? Authority-first writing establishes trust through status markers. Consequence-first writing establishes trust through evidence of what the work did. Note which pattern dominates — the user's profile may prescribe a preference."
+    },
+    {
+      "id": "genre_moves",
+      "category": "structural",
+      "type": "diagnostic",
+      "name": "Structural completeness and effectiveness",
+      "instruction": "Are all expected structural moves present for this document type? And do the moves accomplish what the genre requires, or are they present but hollow? A cover letter that has a 'fit' section but only announces alignment (rather than demonstrating it through intellectual engagement) has the move present but ineffective. Check both presence and function. If the current genre defines a genre_moves list, check against it."
+    },
+    {
+      "id": "narrative_structure",
+      "category": "structural",
+      "type": "diagnostic",
+      "name": "Story completeness",
+      "instruction": "Does each story or example in the text have: orientation (who, when, where — enough to picture the moment), complication (what happened — the specific event or tension), evaluation (why it matters — the point of the story), and result (what changed as a consequence)? Flag stories where the evaluation is announced before the complication is told — this is a common AI-writing pattern where the significance is declared first ('What happened next is the most direct account of X') and the story follows. The story should earn its point; the reader should feel the significance before being told it."
+    },
+    {
+      "id": "argumentative_progression",
+      "category": "structural",
+      "type": "diagnostic",
+      "name": "Paragraph sequence matters",
+      "instruction": "Does each paragraph build on the previous one's conclusion, or could paragraphs be reordered without loss? If reordering wouldn't change meaning, the text is a list disguised as an argument. Genuine argumentative progression means paragraph N's opening could not have been written without paragraph N-1's conclusion. Check whether the sequence is load-bearing."
+    },
+    {
+      "id": "nucleus_satellite",
+      "category": "structural",
+      "type": "diagnostic",
+      "name": "Supporting detail function",
+      "instruction": "Does each supporting detail (example, qualification, aside, elaboration) serve a clear rhetorical function for the main point of its section? Or are details adjacent to the point without serving it? Each satellite (supporting element) should have a clear relationship to its nucleus (main claim): evidence, elaboration, contrast, concession, or cause. If a detail doesn't serve any of these functions, it may be padding."
+    },
+    {
+      "id": "positive_da",
+      "category": "structural",
+      "type": "diagnostic",
+      "name": "Protect what works before cutting",
+      "instruction": "Before cutting during revision, check whether passages effectively use: (1) shared values enacted through practice rather than stated ('the framework is the problem' creates solidarity with anyone who has struggled against institutional defaults — without saying 'we share a commitment to X'), (2) evaluation shown through narrative rather than declared (a story that makes the reader feel the critique without the author ever saying 'this was flawed'), or (3) three-beat escalation building toward a point where the third element carries the most weight. Protect passages that do these well — they are the passages that work."
+    }
+  ]
+}

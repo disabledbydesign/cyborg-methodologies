@@ -128,14 +128,94 @@ THRESH_WORDCOUNT_OVER = 1.10  # 110% of target
 
 
 # ---------------------------------------------------------------------------
-# Profile loading
+# Profile loading and merging
 # ---------------------------------------------------------------------------
 
+def merge_profiles(base: dict, user: dict) -> dict:
+    """Merge a base profile and a sparse user profile into a single effective profile.
+
+    Merge semantics:
+    - Patterns: base + user lists concatenated per category. User _disable dict removes
+      exact-string matches from base. New user categories are added.
+    - Thresholds: user values override base (sparse dict merge).
+    - Qualitative: base checks first; user checks with same ID replace base check;
+      user checks with new IDs are appended.
+    - Genres, stylometry, perplexity, embeddings: from user only (base has none).
+    - Profile metadata: from user profile.
+    """
+    merged = {}
+
+    # Profile metadata: from user
+    merged["profile"] = user.get("profile", base.get("profile", {}))
+
+    # Patterns: extend per category, apply _disable
+    base_patterns = base.get("patterns", {})
+    user_patterns = {k: v for k, v in user.get("patterns", {}).items() if k != "_disable"}
+    disable_map = user.get("patterns", {}).get("_disable", {})
+
+    merged_patterns = {}
+    all_categories = set(base_patterns.keys()) | set(user_patterns.keys())
+    for cat in all_categories:
+        combined = list(base_patterns.get(cat, [])) + list(user_patterns.get(cat, []))
+        disabled = set(disable_map.get(cat, []))
+        if disabled:
+            combined = [p for p in combined if p not in disabled]
+        merged_patterns[cat] = combined
+    merged["patterns"] = merged_patterns
+
+    # Thresholds: user overrides base
+    merged["thresholds"] = {**base.get("thresholds", {}), **user.get("thresholds", {})}
+
+    # Qualitative: base checks first, user overrides by ID or appends
+    qual_by_id = {q["id"]: q for q in base.get("qualitative", [])}
+    for q in user.get("qualitative", []):
+        qual_by_id[q["id"]] = q  # replace or add
+    merged["qualitative"] = list(qual_by_id.values())
+
+    # Genres: from user only (base has none)
+    if "genres" in user:
+        merged["genres"] = user["genres"]
+
+    # Computational linguistics: from user only
+    for key in ("stylometry", "perplexity", "embeddings"):
+        if key in user:
+            merged[key] = user[key]
+
+    return merged
+
+
+def discover_profile():
+    """Auto-discover user profile in the profiles directory.
+
+    Returns (path, count) where:
+    - path is the profile path if exactly one non-base profile found, None otherwise
+    - count is the number of non-base profiles found
+    """
+    profiles_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+    if not os.path.isdir(profiles_dir):
+        return None, 0
+
+    candidates = [
+        f for f in os.listdir(profiles_dir)
+        if f.endswith(".json") and f != "base.json"
+    ]
+
+    if len(candidates) == 1:
+        return os.path.join(profiles_dir, candidates[0]), 1
+    return None, len(candidates)
+
+
 def load_profile(profile_path: str) -> dict:
-    """Load a voice profile from JSON. Validates structure and regex patterns."""
+    """Load a voice profile from JSON. Validates structure and regex patterns.
+
+    If the profile has a "base" field, loads the base profile and merges them.
+    Stashes _user_profile_path on the merged result so learn_from_revision knows
+    where to write back. Backwards compatible: profiles without "base" are returned
+    as-is.
+    """
     try:
         with open(profile_path, "r", encoding="utf-8") as f:
-            profile = json.load(f)
+            user = json.load(f)
     except json.JSONDecodeError as e:
         print(f"Error: Profile at {profile_path} is not valid JSON: {e}", file=sys.stderr)
         sys.exit(1)
@@ -143,7 +223,7 @@ def load_profile(profile_path: str) -> dict:
     # Validate regex patterns compile correctly
     for category in ("hedge_words", "self_aggrandizing", "topic_sentence_starters",
                       "logical_connectors", "narrative_padding", "corporate_jargon"):
-        for pattern_str in profile.get("patterns", {}).get(category, []):
+        for pattern_str in user.get("patterns", {}).get(category, []):
             try:
                 re.compile(pattern_str, re.IGNORECASE)
             except re.error as e:
@@ -151,7 +231,31 @@ def load_profile(profile_path: str) -> dict:
                       f"\"{pattern_str}\" — {e}", file=sys.stderr)
                 sys.exit(1)
 
-    return profile
+    # If no base reference, return as standalone (backwards compatible)
+    if "base" not in user:
+        return user
+
+    # Resolve base path relative to user profile's directory
+    profile_dir = os.path.dirname(os.path.abspath(profile_path))
+    base_path = os.path.join(profile_dir, user["base"])
+    if not os.path.exists(base_path):
+        print(f"Warning: Base profile not found at {base_path}. Using user profile standalone.",
+              file=sys.stderr)
+        return user
+
+    try:
+        with open(base_path, "r", encoding="utf-8") as f:
+            base = json.load(f)
+    except json.JSONDecodeError as e:
+        print(f"Warning: Base profile at {base_path} is not valid JSON: {e}. "
+              f"Using user profile standalone.", file=sys.stderr)
+        return user
+
+    merged = merge_profiles(base, user)
+    # Stash paths for learn-back writes
+    merged["_user_profile_path"] = profile_path
+    merged["_base_path"] = base_path
+    return merged
 
 
 def apply_profile(profile: dict, genre: str = None):
@@ -338,7 +442,45 @@ def calibrate_from_samples(sample_dir: str, output_path: str = None):
             result = min(result, ceiling)
         return result
 
-    # Build profile
+    # Compute all thresholds from samples
+    computed_thresholds = {
+        "long_sentence_words": threshold(all_sentence_lengths, floor=35, ceiling=55),
+        "rewrite_sentence_words": threshold(all_sentence_lengths, floor=45, ceiling=65) + 10,
+        "long_sentence_max": 6,
+        "rewrite_sentence_max": 3,
+        "emdash_per_1000w": threshold(all_emdash_densities, floor=5, ceiling=25, round_to=1),
+        "emdash_insertion_words": 12,
+        "hedge_max": count_threshold(all_hedge_rates, buffer=1, ceiling=3) if statistics.mean(all_hedge_rates) > 0.5 else 0,
+        "self_aggrandizing_max": 0,
+        "topic_opener_max": count_threshold(all_topic_opener_counts, buffer=1, ceiling=5),
+        "logical_connector_max": count_threshold(all_connector_rates, buffer=1, ceiling=6) if statistics.mean(all_connector_rates) > 1 else 3,
+        "narrative_padding_max": 0,
+        "product_description_max": 0,
+        "corporate_jargon_max": 0,
+        "wordcount_over_pct": 115
+    }
+
+    # Load base thresholds for sparse diff — only store overrides
+    base_json_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles", "base.json")
+    base_thresholds = {}
+    has_base = os.path.exists(base_json_path)
+    if has_base:
+        try:
+            with open(base_json_path, "r", encoding="utf-8") as f:
+                base_thresholds = json.load(f).get("thresholds", {})
+        except (json.JSONDecodeError, OSError):
+            has_base = False
+
+    # Build sparse thresholds: only include values that differ from base
+    if has_base:
+        sparse_thresholds = {
+            k: v for k, v in computed_thresholds.items()
+            if k not in base_thresholds or v != base_thresholds[k]
+        }
+    else:
+        sparse_thresholds = computed_thresholds
+
+    # Build profile — sparse format if base.json exists, full format otherwise
     profile = {
         "profile": {
             "name": "[Your Name]",
@@ -347,113 +489,22 @@ def calibrate_from_samples(sample_dir: str, output_path: str = None):
             "calibrated_from": f"{len(samples)} writing sample(s) in {sample_dir}",
             "description": "Auto-calibrated voice profile. Edit name, description, and qualitative checks to match your voice."
         },
-        "patterns": {
-            "hedge_words": [
-                "\\bperhaps\\b",
-                "\\bpotentially\\b",
-                "(?<![A-Z])\\bmay\\b(?!\\s+\\d)",
-                "\\bmight\\b",
-                "\\bcould be\\b",
-                "\\bappears to\\b",
-                "\\bseems to\\b"
-            ],
-            "self_aggrandizing": [
-                "\\bgroundbreaking\\b",
-                "\\btransformative\\b",
-                "\\bunprecedented\\b",
-                "\\bmost significant\\b",
-                "\\bmost compelling\\b"
-            ],
-            "topic_sentence_starters": [
-                "(?:^|\\. +)This is\\b",
-                "(?:^|\\. +)These are\\b",
-                "(?:^|\\. +)That is\\b"
-            ],
-            "logical_connectors": [
-                "\\bhowever\\b",
-                "\\bmoreover\\b",
-                "\\bfurthermore\\b",
-                "\\badditionally\\b",
-                "\\bconsequently\\b"
-            ],
-            "narrative_padding": [
-                "\\bwhat happened next\\b",
-                "\\bit is worth noting\\b",
-                "\\bit should be noted\\b"
-            ],
-            "corporate_jargon": [
-                "\\bactionable insights?\\b",
-                "\\bleveraging\\b",
-                "\\bstakeholder engagement\\b",
-                "\\bthought leader(?:ship)?\\b",
-                "\\bsynerg(?:y|ies|istic)\\b",
-                "\\bimpactful\\b",
-                "\\binnovative solutions?\\b"
-            ]
-        },
-        "thresholds": {
-            "long_sentence_words": threshold(all_sentence_lengths, floor=35, ceiling=55),
-            "rewrite_sentence_words": threshold(all_sentence_lengths, floor=45, ceiling=65) + 10,
-            "long_sentence_max": 6,
-            "rewrite_sentence_max": 3,
-            "emdash_per_1000w": threshold(all_emdash_densities, floor=5, ceiling=25, round_to=1),
-            "emdash_insertion_words": 12,
-            "hedge_max": count_threshold(all_hedge_rates, buffer=1, ceiling=3) if statistics.mean(all_hedge_rates) > 0.5 else 0,
-            "self_aggrandizing_max": 0,
-            "topic_opener_max": count_threshold(all_topic_opener_counts, buffer=1, ceiling=5),
-            "logical_connector_max": count_threshold(all_connector_rates, buffer=1, ceiling=6) if statistics.mean(all_connector_rates) > 1 else 3,
-            "narrative_padding_max": 0,
-            "product_description_max": 0,
-            "corporate_jargon_max": 0,
-            "wordcount_over_pct": 115
-        },
-        "qualitative": [
-            {
-                "id": "transitivity",
-                "category": "ideational",
-                "name": "Transitivity check",
-                "instruction": "Are topic sentences using material processes ('I built,' 'I developed') or relational ('This is,' 'These are')? Check the ratio."
-            },
-            {
-                "id": "concept_scope",
-                "category": "ideational",
-                "name": "Concept scope",
-                "instruction": "Are key concepts used as ARCHITECTURE (organizing a section) or just VOCABULARY (mentioned and abandoned)?"
-            },
-            {
-                "id": "referential_strategy",
-                "category": "interpersonal",
-                "name": "Referential strategy",
-                "instruction": "Is the author positioned as an ACTOR who does things, or as a CATEGORY to be identified?"
-            },
-            {
-                "id": "argumentation_topoi",
-                "category": "interpersonal",
-                "name": "Argumentation topoi",
-                "instruction": "Does the text lead with authority (credentials) or consequence (what happened, what it means)?"
-            },
-            {
-                "id": "theme_rheme",
-                "category": "textual",
-                "name": "Theme/Rheme",
-                "instruction": "Are new concepts introduced in subject position (hard to parse) or in predicate position (easier)? Subjects should be simple and familiar."
-            },
-            {
-                "id": "genre_moves",
-                "category": "structural",
-                "name": "Genre moves",
-                "instruction": "Are all expected moves present for this document type?"
-            },
-            {
-                "id": "narrative_structure",
-                "category": "structural",
-                "name": "Narrative structure",
-                "instruction": "Does each story have orientation, complication, evaluation, and result?"
-            }
-        ],
-        "genres": {},
-        "_instructions": "This profile was auto-generated from your writing samples. To customize: (1) Edit 'profile.name' and 'profile.description'. (2) Add patterns specific to YOUR anti-patterns in the 'patterns' section. (3) Run /voice-check setup to have the LLM analyze your samples and generate custom qualitative checks. (4) Configure genres with threshold overrides for each document type you write. (5) Adjust thresholds after running the tool on a few drafts."
+        "thresholds": sparse_thresholds,
+        "patterns": {},  # empty — user adds personal anti-patterns during setup
+        "qualitative": [],  # empty skeleton — agent fills during setup
+        "_instructions": (
+            "This profile was auto-generated from your writing samples. "
+            "It uses a three-layer architecture: base.json (universal norms) + this file (your overrides) + genre (per-document overrides). "
+            "To customize: (1) Edit 'profile.name' and 'profile.description'. "
+            "(2) Add patterns specific to YOUR anti-patterns in the 'patterns' section (these extend the base patterns). "
+            "(3) Use '/voice-check setup' to have the LLM analyze your samples and generate qualitative checks. "
+            "(4) Use '/voice-check genre' to configure genres through a guided conversation. "
+            "(5) Adjust thresholds after running the tool on a few drafts (only values that differ from base need to be listed)."
+        )
     }
+
+    if has_base:
+        profile["base"] = "base.json"
 
     if output_path is None:
         output_path = os.path.join(sample_dir, "voice_profile.json")
@@ -501,15 +552,17 @@ def calibrate_from_samples(sample_dir: str, output_path: str = None):
         json.dump(profile, f, indent=2, ensure_ascii=False)
 
     print(f"\n  Profile written to: {output_path}")
+    if has_base:
+        print(f"  Profile format: sparse (references base.json; only {len(sparse_thresholds)} threshold override(s) stored)")
     print(f"\n  Computed thresholds from {len(samples)} sample(s):")
-    t = profile["thresholds"]
+    t = computed_thresholds
     print(f"    Long sentence:    {t['long_sentence_words']} words")
     print(f"    Rewrite sentence: {t['rewrite_sentence_words']} words")
     print(f"    Em-dash density:  {t['emdash_per_1000w']}/1000 words")
     print(f"    Hedge tolerance:  {t['hedge_max']}")
     print(f"    Connector max:    {t['logical_connector_max']}")
     print(f"\n  Next steps:")
-    print(f"    1. Edit the profile: set your name, description, and tweak patterns")
+    print(f"    1. Edit the profile: set your name, description, and add your personal anti-patterns")
     print(f"    2. Run '/voice-check setup' to extract qualitative voice characteristics")
     print(f"    3. Use it: python3 writing_check.py draft.md --profile {output_path}")
     print()
@@ -863,6 +916,61 @@ def analyze_corporate_jargon(analysis_text: str, raw_lines, body_lines, body_lin
     }
 
 
+def analyze_front_loading(text: str, raw_lines, body_lines, body_line_map) -> dict:
+    """Flag sentences with heavy subjects (many content words before the main verb).
+
+    Content word POS tags counted: NN*, JJ*, RB*, VBG
+    Main verb POS tags (predicate onset): VBP, VBZ, VBD, VB, MD
+    Sentences under 6 words are skipped.
+    Existential 'There is/are...' constructions are skipped.
+    Threshold: >8 content words before main verb.
+    Flag triggered: >2 heavy-subject sentences in the document.
+    """
+    sentences = sent_tokenize(text)
+    heavy = []
+
+    for sent in sentences:
+        words = word_tokenize(sent)
+        if len(words) < 6:
+            continue
+        tagged = pos_tag(words)
+
+        # Find first main verb; count content words before it
+        content_before_verb = 0
+        found_verb = False
+        for i, (word, tag) in enumerate(tagged):
+            if tag in ('VBP', 'VBZ', 'VBD', 'VB', 'MD'):
+                # Skip existential "There is/are" constructions
+                if i == 1 and tagged[0][0].lower() == 'there':
+                    break
+                found_verb = True
+                break
+            if tag.startswith(('NN', 'JJ', 'RB', 'VBG')):
+                content_before_verb += 1
+
+        if not found_verb:
+            continue
+
+        if content_before_verb > 8:
+            # Find line number by matching sentence text against body lines
+            line_no = get_line_for_position(
+                body_lines, body_line_map,
+                text.find(sent[:40]) if sent[:40] in text else 0
+            )
+            heavy.append({
+                "text": sent[:120],
+                "subject_weight": content_before_verb,
+                "line": line_no,
+            })
+
+    return {
+        "heavy_subject_count": len(heavy),
+        "heavy_subject_max": max((h["subject_weight"] for h in heavy), default=0),
+        "examples": heavy[:5],
+        "flag": len(heavy) > 2,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Flagged sentences collector
 # ---------------------------------------------------------------------------
@@ -962,6 +1070,8 @@ def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
     pd = results["padding"]
     pr = results["product_descriptions"]
     cj = results.get("corporate_jargon", {"count": 0, "items": [], "flag": False})
+    fl = results.get("front_loading", {"heavy_subject_count": 0, "heavy_subject_max": 0,
+                                       "examples": [], "flag": False})
 
     sign = "+" if wc["pct_diff"] >= 0 else ""
 
@@ -1041,6 +1151,17 @@ def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
         lines.append(f"    Line {item['line']}: \"{item['phrase']}\" \u2014 \"{item['context']}\"")
     lines.append("")
 
+    # Front-loading
+    lines.append("FRONT-LOADING")
+    lines.append(f"  Heavy subjects (>8 content words before main verb): {fl['heavy_subject_count']}"
+                 + flag_marker(fl["flag"]))
+    if fl["heavy_subject_max"] > 0:
+        lines.append(f"  Max subject weight: {fl['heavy_subject_max']} content words")
+    for ex in fl["examples"]:
+        line_info = f"Line {ex['line']}: " if ex.get("line") else ""
+        lines.append(f"    {line_info}\"{ex['text']}\" ({ex['subject_weight']} content words)")
+    lines.append("")
+
     # Flagged sentences
     lines.append("\u2550" * 51)
     lines.append("  FLAGGED SENTENCES (review these)")
@@ -1104,6 +1225,9 @@ def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
     if cj["flag"]:
         flag_breakdown["corporate jargon"] = cj["count"]
         voice_flags += cj["count"]
+    if fl["flag"]:
+        flag_breakdown["front-loaded subjects"] = fl["heavy_subject_count"]
+        voice_flags += fl["heavy_subject_count"]
 
     total_flags = sum(flag_breakdown.values())
     breakdown_str = ", ".join(f"{v} {k}" for k, v in flag_breakdown.items())
@@ -1209,9 +1333,22 @@ def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_pa
         except ImportError:
             pass
 
-    # Save updated profile
-    with open(profile_path, "w", encoding="utf-8") as f:
-        json.dump(updated, f, indent=2, ensure_ascii=False)
+    # Save updated profile — write back only user-profile fields, not merged base data.
+    # If the profile was a base+user merge, _user_profile_path points to the user file.
+    # If it's a standalone profile, profile_path is used directly.
+    write_path = updated.get("_user_profile_path", profile_path)
+
+    # Reload the user-only profile from disk to avoid writing base data into user file
+    with open(write_path, "r", encoding="utf-8") as f:
+        user_only = json.load(f)
+
+    # Copy updated computational sections back into user-only profile
+    for key in ("stylometry", "perplexity", "embeddings"):
+        if key in updated:
+            user_only[key] = updated[key]
+
+    with open(write_path, "w", encoding="utf-8") as f:
+        json.dump(user_only, f, indent=2, ensure_ascii=False)
 
     revision_count = updated["stylometry"]["revision_count"]
     print(f"\n  Profile updated. Revision count: {revision_count}")
@@ -1252,6 +1389,8 @@ def run_analysis(filepath: str, target: int = 1200) -> dict:
             "readability": {"flesch_kincaid": 0, "gunning_fog": 0, "flesch_reading_ease": 0},
             "padding": {"count": 0, "items": [], "flag": False},
             "product_descriptions": {"count": 0, "items": [], "flag": False},
+            "front_loading": {"heavy_subject_count": 0, "heavy_subject_max": 0,
+                              "examples": [], "flag": False},
             "flagged_sentences": [],
             "empty": True,
         }
@@ -1274,6 +1413,7 @@ def run_analysis(filepath: str, target: int = 1200) -> dict:
         "padding": analyze_padding(analysis_text, raw_lines, body_lines, body_line_map),
         "product_descriptions": analyze_product_descriptions(analysis_text, raw_lines, body_lines, body_line_map),
         "corporate_jargon": analyze_corporate_jargon(analysis_text, raw_lines, body_lines, body_line_map),
+        "front_loading": analyze_front_loading(analysis_text, raw_lines, body_lines, body_line_map),
     }
 
     flagged = collect_flagged_sentences(analysis_text, raw_lines, body_lines, body_line_map, results)
@@ -1321,7 +1461,24 @@ def main():
     # Learning mode (post-revision profile update)
     if args.learn:
         if not args.profile:
-            parser.error("--learn requires --profile to specify which profile to update")
+            # Try auto-discovery before failing
+            discovered_path, count = discover_profile()
+            if discovered_path:
+                print(f"  Auto-discovered profile: {os.path.basename(discovered_path)}",
+                      file=sys.stderr)
+                args.profile = discovered_path
+            elif count > 1:
+                profiles_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+                available = sorted(
+                    f for f in os.listdir(profiles_dir)
+                    if f.endswith(".json") and f != "base.json"
+                )
+                print("Multiple profiles found. Use --profile to specify:", file=sys.stderr)
+                for p in available:
+                    print(f"  --profile profiles/{p}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                parser.error("--learn requires --profile (no user profile found; run --calibrate first)")
         first_path, final_path = args.learn
         for p in (first_path, final_path):
             if not os.path.isfile(p):
@@ -1348,6 +1505,33 @@ def main():
     if not os.path.isfile(args.file):
         print(f"Error: File not found: {args.file}", file=sys.stderr)
         sys.exit(1)
+
+    # Auto-discover profile if not specified
+    if args.profile is None:
+        discovered_path, count = discover_profile()
+        if discovered_path:
+            print(f"  Auto-discovered profile: {os.path.basename(discovered_path)}",
+                  file=sys.stderr)
+            args.profile = discovered_path
+        elif count > 1:
+            profiles_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+            available = sorted(
+                f for f in os.listdir(profiles_dir)
+                if f.endswith(".json") and f != "base.json"
+            )
+            print("Multiple profiles found. Use --profile to specify:", file=sys.stderr)
+            for p in available:
+                print(f"  --profile profiles/{p}", file=sys.stderr)
+            sys.exit(1)
+        else:
+            # No user profile — fall back to base.json if it exists
+            base_fallback = os.path.join(
+                os.path.dirname(os.path.abspath(__file__)), "profiles", "base.json"
+            )
+            if os.path.exists(base_fallback):
+                print("  No user profile found. Using base defaults. "
+                      "Run --calibrate to create your profile.", file=sys.stderr)
+                args.profile = base_fallback
 
     # Load and apply voice profile if specified
     genre_word_target = None

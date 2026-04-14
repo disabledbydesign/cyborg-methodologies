@@ -10,7 +10,7 @@ contexts/
 
 # Personal voice profiles
 profiles/*
-!profiles/default.json
+!profiles/base.json
 
 # Writing samples used for calibration
 samples/

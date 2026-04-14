@@ -179,20 +179,25 @@ class TestCalibrateIntegration:
         loaded = writing_check.load_profile(path)
         assert "stylometry" in loaded
 
-    def test_calibration_profile_has_genres_key(self, calibrated_profile):
+    def test_calibration_profile_has_base_reference_or_thresholds(self, calibrated_profile):
+        """Sparse profiles reference base.json; standalone profiles have full thresholds."""
         profile, _ = calibrated_profile
-        assert "genres" in profile
+        # In three-layer architecture: sparse profile has "base" field + sparse thresholds.
+        # Standalone (no base.json available): full thresholds present.
+        assert "base" in profile or "thresholds" in profile
 
-    def test_calibration_profile_has_qualitative_checks(self, calibrated_profile):
+    def test_calibration_profile_has_qualitative_key(self, calibrated_profile):
+        """Qualitative section exists as empty skeleton — agent fills during setup."""
         profile, _ = calibrated_profile
         assert "qualitative" in profile
-        assert len(profile["qualitative"]) > 0
+        # In sparse profiles, qualitative is empty — agent fills during setup conversation.
+        assert isinstance(profile["qualitative"], list)
 
     def test_calibration_profile_has_thresholds(self, calibrated_profile):
         profile, _ = calibrated_profile
         t = profile["thresholds"]
-        assert "long_sentence_words" in t
-        assert "hedge_max" in t
+        # Sparse profile has only overrides; at minimum, the thresholds key exists.
+        assert isinstance(t, dict)
 
     def test_calibration_continues_when_perplexity_unavailable(
         self, monkeypatch, sample_dir, tmp_path

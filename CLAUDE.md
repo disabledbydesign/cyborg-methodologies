@@ -11,14 +11,16 @@ Both tools are built as Claude Code skills but the Python scripts work standalon
 
 ## Current State (as of 2026-04-13)
 
-- voice-check: functional, 277 tests passing. All computational linguistics modules built:
-  - `stylometry.py` — function word frequencies, punctuation ratios, vocabulary richness, Burrows' Delta
-  - `perplexity.py` — per-sentence perplexity via MLX local models
-  - `embeddings.py` — sentence embedding similarity via fastembed
-  - Genre system — 8 genres with register-based threshold overrides in profile schema
-  - `--learn` mode integrates all three modules for post-revision profile updates
-  - SKILL.md rewritten around three-layer agent integration (style guide, contamination linter, learning loop)
-- Next priorities: test genre system in real writing sessions, tune genre thresholds from actual use
+- voice-check: functional, 260 tests passing. Three-layer profile architecture (base → user → genre):
+  - `base.json` — universal norms: contamination patterns, permissive thresholds, 16 qualitative checks
+  - User profiles are sparse (overrides + additions only), reference base.json
+  - Genres are user-defined (skill ships with none). Created through guided conversation.
+  - `--learn` mode updates user profile only, never modifies base
+  - Auto-discovery: CLI finds profiles without explicit `--profile` flag
+  - Front-loading detection: quantitative heuristic (heavy subjects) + qualitative check
+  - Reflection sessions: periodic pattern review across writing sessions
+  - `stylometry.py`, `perplexity.py`, `embeddings.py` — computational linguistics modules
+- Next priorities: test three-layer architecture in real writing sessions, tune base thresholds from diverse users
 - discourse-analysis: functional; active research project in `contexts/ai-slop.md` (12-text corpus on "ai slop" discourses, 7 findings accumulated)
 
 ## Project Index
@@ -36,7 +38,7 @@ cyborg-methodologies/
 │   ├── stylometry.py                 # Voice fingerprinting: Burrows' Delta, function words, vocab richness
 │   ├── perplexity.py                 # Per-sentence perplexity via MLX local models
 │   ├── embeddings.py                 # Sentence embedding similarity via fastembed
-│   ├── profiles/default.json         # Profile schema with genre overrides (8 genres)
+│   ├── profiles/base.json             # Universal base profile (ships with skill, no user data)
 │   └── tests/
 │       ├── test_voice_profiles.py    # 19 profile/analysis tests
 │       ├── test_stylometry.py        # 71 stylometry tests
@@ -67,7 +69,7 @@ cyborg-methodologies/
 | `voice-check/stylometry.py` | Voice fingerprinting engine; Burrows' Delta, calibration, learning loop |
 | `voice-check/perplexity.py` | Perplexity scoring via MLX; calibration and learning |
 | `voice-check/embeddings.py` | Sentence embeddings via fastembed; semantic drift detection |
-| `voice-check/profiles/default.json` | Profile JSON schema with 8 genre overrides, stylometry/perplexity/embeddings sections |
+| `voice-check/profiles/base.json` | Universal base profile: contamination patterns, permissive thresholds, 16 qualitative checks. Ships with skill. |
 | `voice-check/SKILL.md` | Agent integration protocol: style guide, contamination linter, learning loop, genre system |
 | `discourse-analysis/SKILL.md` | Full /da pipeline, anti-sycophancy protocols, research note format |
 | `contexts/ai-slop.md` | Active discourse analysis project with accumulated findings |
@@ -84,7 +86,7 @@ cyborg-methodologies/
 
 **Voice-check workflow**: The SKILL.md defines a three-layer agent integration protocol — not a linter the user runs manually. Agents load the voice profile before drafting, self-check and self-correct contamination silently, and offer the learning loop at session end. The user sees clean drafts, not reports.
 
-**Genre system**: Profile schema has a `genres` section with register-based threshold overrides. `apply_profile(profile, genre="research_paper")` merges genre overrides on top of base thresholds. Genre selection is usually obvious from context. Eight genres defined: academic_position, tech_position, edtech_position, grant_application, research_paper, blog_essay, social_media, professional_correspondence.
+**Three-layer architecture**: Profiles merge base → user → genre. `base.json` has universal norms. User profiles are sparse (overrides only) and reference `"base": "base.json"`. Genres are user-defined and live in the user profile. `merge_profiles(base, user)` handles the merge; `load_profile()` auto-detects base references. `discover_profile()` auto-finds profiles when `--profile` is omitted.
 
 **Computational linguistics modules** (`stylometry.py`, `perplexity.py`, `embeddings.py`): Each has calibrate/compute/compare/update functions. All participate in `--calibrate` and `--learn` with graceful fallback when dependencies are missing. None use the `apply_profile()` globals pattern — they take profile sections as arguments.
 
