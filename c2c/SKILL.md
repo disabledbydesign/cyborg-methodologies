@@ -140,8 +140,9 @@ Standing constraints: <from human, if any>
   to do. Don't skip it.
 - Roles are negotiable — if a different structure would serve the work better, propose it
 
-**Instance A at session close**: produce a handoff using the handoff template; output to `artifacts/`.
-**Instance B at session close**: cross-read A's handoff; flag anything that smooths over a live disagreement or understates what B found.
+**After each turn**: wake the other instance using the `tmux send-keys` command in LAUNCH.md. Hand off immediately — do not wait.
+**Instance A at session close**: update PROJECT_CONTEXT_MAP.md → produce handoff → write close note to CONVERSATION.md instead of waking B → flag June to kill the tmux session.
+**Instance B at session close**: update PROJECT_CONTEXT_MAP.md → annotate/flag A's handoff → write close note instead of waking A → flag June to kill the tmux session.
 
 ---
 
@@ -152,61 +153,71 @@ Standing constraints: <from human, if any>
 ---
 ```
 
-**LAUNCH.md** should include:
-- The exact terminal commands (see Launch section below)
-- The checkpoint protocol (read A before starting B; read B before A's next turn)
-- Reminder that Reframe must be active before starting either instance
+**LAUNCH.md** should contain:
+- The exact tmux setup and launch commands (see Launch section below) — copy-paste ready
+- The wake-up commands each instance uses to hand off to the other (with actual session/pane names filled in)
+- The session close procedure
 
-**Then stop and report to the human:**
-- What you generated
-- Reframe status — check and state it explicitly; do not assume it's active
-- That they need to write the pre-session note in CONVERSATION.md before launching
-- That they should review the read-order list and scope before launching
+**After generating files, launch the session automatically:**
 
-Do not launch instances. The human launches, assigns roles verbally.
+1. Create the tmux session and panes
+2. Start claude instances in each pane (interactive — Reframe hooks fire)
+3. Send the opening prompt to Instance A to begin the first turn
+4. Report to the human: session is running, attach command to watch
+
+Instance A goes first. A wakes B when done; B wakes A; chain is self-sustaining from there.
+
+**Then report to the human:**
+- Session launched — attach with: `tmux attach -t c2c-<session-name>`
+- Reframe status — check and state it explicitly
+- How to intervene: add a dated note to CONVERSATION.md; the next instance reads it on their turn
+- How to close: described in LAUNCH.md
 
 ---
 
 **First session (no prior handoff):**
 
-Ask the human for any existing documents they want instances to read — research, analytical work, orientation documents. Generate the same CONVERSATION.md structure; the read-order lists whatever documents the human provides. Leave a clear note in the pre-session note placeholder asking the human to orient instances to what they're building and why.
+Ask the human for any existing documents they want instances to read. Generate the same structure; the read-order lists whatever documents the human provides. Leave a note in the pre-session placeholder asking the human to orient instances to what they're building and why.
 
 ---
 
-**Launch — interactive terminals, not automated:**
+**Launch — tmux, fully automated:**
+
+The skill runs these commands as part of `/c2c start`:
 
 ```bash
-# Terminal 1
-cd <project-directory>
-claude --model claude-opus-4-7-20251001
-# Say: "Read CONVERSATION.md. You're Instance A — you lead."
+# Create tmux session with two named panes
+tmux new-session -d -s c2c-<session-name> -n instance-a
+tmux new-window -t c2c-<session-name> -n instance-b
 
-# Terminal 2 — start AFTER reading A's first turn
-cd <project-directory>
-claude --model claude-sonnet-4-6
-# Say: "Read CONVERSATION.md. You're Instance B — you stress-test."
+# Start claude instances in each pane (interactive — Reframe hooks fire)
+tmux send-keys -t c2c-<session-name>:instance-a "cd <project-dir> && claude --model claude-opus-4-7-20251001" Enter
+tmux send-keys -t c2c-<session-name>:instance-b "cd <project-dir> && claude --model claude-sonnet-4-6" Enter
+
+# Trigger Instance A's first turn (after brief pause for claude to start)
+sleep 5
+tmux send-keys -t c2c-<session-name>:instance-a "Read CONVERSATION.md at <session-dir>/CONVERSATION.md. You are Instance A — you lead." Enter
 ```
 
-Model selection: Opus leads (stronger for design and analysis), Sonnet stress-tests (adequate for critique, faster). Adjust based on task and cost. Current model IDs are defaults — use whatever is current.
+**Cycling — event-driven, no crons:**
 
-**Cycling — notification crons (option 2):**
+Each instance hands off directly to the other at the end of its turn. No clock-based scheduling needed. Full A+B cycle is naturally ~40 minutes based on actual turn length.
 
-Instances run in interactive terminals. A cron fires a macOS notification to prompt the human to check CONVERSATION.md and start the next instance's turn. This keeps Reframe hooks active (interactive sessions only) while reducing friction.
-
-Add two cron entries at session start — one per instance, offset from each other:
+Wake-up commands (fill in session name — these go in LAUNCH.md and in each instance's prompt):
 
 ```bash
-# fires every 30 min, offset by 15 for B
-# Instance A reminder
-*/30 * * * * osascript -e 'display notification "Instance A turn due — check CONVERSATION.md" with title "C2C: <session-name>"'
-# Instance B reminder (offset: add to crontab at a 15-min offset, or use a different schedule)
+# A wakes B (A runs this at end of its turn):
+tmux send-keys -t c2c-<session-name>:instance-b "B: Instance A has written a new turn. Read CONVERSATION.md and respond." Enter
+
+# B wakes A (B runs this at end of its turn):
+tmux send-keys -t c2c-<session-name>:instance-a "A: Instance B has written a new turn. Read CONVERSATION.md and respond." Enter
 ```
 
-Adjust interval to match typical turn length. The human reads the turn, decides whether to intervene, then starts the next instance.
+**Session close:**
 
-**Session close — remove the cron jobs:**
-
-When both instances signal they're ready to close, the instances should explicitly flag to the human: **remove the notification cron entries for this session** (`crontab -e`, delete the session-specific lines). Leaving them running after session close creates noise.
+When both instances agree the session is done, the closing instance writes a close note to CONVERSATION.md instead of waking the other. It then flags June to:
+1. Detach from tmux: `Ctrl+b d`
+2. Kill the session when done: `tmux kill-session -t c2c-<session-name>`
 
 ---
 
