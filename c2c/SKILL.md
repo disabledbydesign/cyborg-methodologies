@@ -85,7 +85,7 @@ Generates the session directory, CONVERSATION.md, and supporting files. Launches
 **Check and create if missing:**
 - `<project-root>/c2c/PROJECT_CONTEXT_MAP.md` — create from generic structure if not present
 - `<project-root>/c2c/SKILL_FEEDBACK.md` — create empty if not present
-- `<project-root>/c2c/SKILL_FEEDBACK_SKILL_LEVEL.md` — note: lives in cyborg-methodologies/c2c/; create if not present
+- `cyborg-methodologies/c2c/SKILL_FEEDBACK.md` — skill-level generalizable findings; lives in cyborg-methodologies, not the project repo; create if not present
 
 **Then generate:**
 
