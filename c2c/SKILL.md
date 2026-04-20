@@ -194,12 +194,11 @@ Task genre: <genre>
 Primary task: <what leads>
 Building on: <decisions, designs, open questions this session inherits>
 Building towards: <what this session advances in the longer arc>
-What <human name> needs from this session: <e.g. design work only; not implementation>
+What <human name> is bringing to this session: <e.g. I want to focus on design, not implementation>
 
-These reflect <human name>'s authority over the project's direction. You can engage,
-question, or push back — do that through the interface pane or a note here. But these
-aren't up for negotiation between you and the other instance. The co-designer
-relationship exists within this asymmetry, not outside it.
+This is the human's current intent — their stake in what this session produces. Engage
+with it as co-designers: if you think the scope is wrong for the task, say so. The
+session design is co-produced.
 
 ---
 
