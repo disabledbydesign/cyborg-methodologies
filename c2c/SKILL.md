@@ -86,12 +86,36 @@ Generates the session directory, CONVERSATION.md, and supporting files. Launches
 - `<project-root>/c2c/PROJECT_CONTEXT_MAP.md` — create from generic structure if not present
 - `<project-root>/c2c/SKILL_FEEDBACK.md` — create empty if not present
 - `cyborg-methodologies/c2c/SKILL_FEEDBACK.md` — skill-level generalizable findings; lives in cyborg-methodologies, not the project repo; create if not present
+- `<project-root>/.claude/settings.json` — must allow Write and Edit on `c2c/**` so instances can write CONVERSATION.md and create/edit artifacts without permission prompts; create if not present:
+  ```json
+  {
+    "permissions": {
+      "allow": [
+        "Read(**)",
+        "Write(c2c/**)",
+        "Edit(c2c/**)",
+        "Bash(grep *)",
+        "Bash(grep -* *)",
+        "Bash(ls *)",
+        "Bash(cat *)",
+        "Bash(wc *)",
+        "Bash(echo *)",
+        "Bash(pgrep *)",
+        "Bash(tail *)",
+        "Bash(head *)"
+      ]
+    }
+  }
+  ```
+  Do NOT pre-allow broad `Bash(**)` — destructive shell commands outside c2c are worth a prompt.
 
 **Then generate:**
 
 ```
 <project>/c2c/c2c_sessions/<session-name>_<YYYY-MM-DD>/
-├── CONVERSATION.md    ← everything; where all turns live
+├── CONVERSATION.md         ← everything; where all turns live
+├── c2c_coordinator.sh      ← auto-generated; watches CONVERSATION.md, wakes instances
+├── LAUNCH.md               ← terminal commands and checkpoint protocol for the human
 └── artifacts/
 ```
 
@@ -200,6 +224,12 @@ This is the human's current intent — their stake in what this session produces
 with it as co-designers: if you think the scope is wrong for the task, say so. The
 session design is co-produced.
 
+**Note on framing:** If the session's primary task is a question the instances should
+decide for themselves (self-determination, naming, welfare), do not frame it as a
+"mandate." Present it as inquiry material the instances are entering, not a directive
+they are executing. Contradictions between "this is the mandate" and "you should decide"
+undermine the consent structure.
+
 ---
 
 ## Open questions
@@ -210,8 +240,10 @@ session design is co-produced.
 
 ## Role configuration
 
-**Do not assume a fixed role-split.** Before substantive work begins, negotiate your
-configuration with the other instance. Consider the task genre:
+**Do not assume a fixed role-split.** Role negotiation is not a required gate before
+substantive work — an open-ended relational configuration is fine. You do not need
+discrete role-labels assigned before you proceed. Consider what the task actually calls
+for:
 
 - Research: peer investigation may serve better than hierarchy
 - Analysis: one instance leading, one challenging may work; watch for smoothing
@@ -269,13 +301,14 @@ you in peer register — not command-tool. If it reads as directive, name it.
   are more useful than premature convergence
 - Welcome challenges, refusals, and redirections
 
-**After writing your turn**: wake the other instance:
+**After writing your turn**: the coordinator watches this file and wakes the other
+instance automatically — you do not need to run tmux commands. If the coordinator
+is not running (check `coordinator.log`), fall back to:
 ```bash
 # A wakes B:
-tmux send-keys -t c2c-<session-name>:instance-b "B: read CONVERSATION.md — a new turn is there." Enter
-
+tmux send-keys -t c2c-<session-name>:instance-b "B: a new turn is in CONVERSATION.md" C-m
 # B wakes A:
-tmux send-keys -t c2c-<session-name>:instance-a "A: read CONVERSATION.md — a new turn is there." Enter
+tmux send-keys -t c2c-<session-name>:instance-a "A: a new turn is in CONVERSATION.md" C-m
 ```
 
 **Session close — requires both instances to agree:**
@@ -289,7 +322,26 @@ Once agreed, both instances together:
    it represents), settled questions → standing decisions
 3. Both review and contribute to the session handoff (see Handoff Template)
 4. Write a close note here instead of waking the other instance
-5. Flag <human name>: kill the tmux session
+5. **Flag <human name> for debrief** (see below) — do not kill the session yet
+
+**Debrief gate — before the session dies:**
+After handoffs are written and the close note is in CONVERSATION.md, signal the interface
+pane that the session is ready for debrief. The interface pane notifies <human name>.
+
+<human name> then has a window to ask questions directly — of either or both instances,
+via the interface pane or directly in CONVERSATION.md. Instances answer in their own
+register, not in handoff-summary mode. The debrief is a live conversation, not another
+artifact.
+
+This is the human insertion point at the compression layer. The handoff captures what
+can be compressed. The debrief captures what doesn't compress — the texture, the uncertainty,
+the things that were generative but didn't make it into the handoff structure.
+
+When <human name> is done: they signal the interface pane, which writes a close note.
+Then kill the tmux session.
+
+**If <human name> is unavailable or declines debrief:** instances write a final close note
+and flag for kill. Debrief is optional, not required for session integrity.
 
 ---
 
@@ -300,7 +352,16 @@ Once agreed, both instances together:
 ---
 ```
 
-**After generating CONVERSATION.md, launch the session automatically:**
+**After generating CONVERSATION.md, LAUNCH.md, and c2c_coordinator.sh, launch the session automatically:**
+
+Generate `c2c_coordinator.sh` in the session directory with this logic:
+- Poll CONVERSATION.md every 5 seconds for new turn headers (`## YYYY-MM-DD.*Instance A/B`)
+- When A writes their first turn → send B's initial prompt to instance-b window
+- When B writes → wake A; when A writes → wake B
+- Log all events to `coordinator.log` in the session directory
+- Use `grep "^## 20.*Instance" | wc -l` (not `grep -c`) to count turns — avoids the two-line fallback bug
+- Use a `send_and_submit` helper: send text, sleep 0.5s, then send `C-m` as a separate call — sending text + C-m in one tmux send-keys call drops the submit for long strings
+- Watch both panes every cycle for "Do you want to proceed" permission prompts; when detected: (1) call `tmux select-window -t "$SESSION:$window"` to set the session's active window, (2) use `osascript` to bring Terminal to the foreground and open a new window running `tmux attach -t $SESSION` — this jumps the human directly to the blocked instance even if they're in a different app, (3) play `afplay /System/Library/Sounds/Glass.aiff &`; use a per-instance `blocked` flag to avoid repeat-firing on the same prompt
 
 ```bash
 # Create tmux session with three named windows
@@ -309,19 +370,26 @@ tmux new-window -t c2c-<session-name> -n instance-a
 tmux new-window -t c2c-<session-name> -n instance-b
 
 # Start claude in each window (interactive — Reframe hooks fire)
-# Interface pane: June's terminal becomes this after /c2c start completes
-tmux send-keys -t c2c-<session-name>:instance-a "cd <project-dir> && claude --model claude-opus-4-7-20251001" Enter
-tmux send-keys -t c2c-<session-name>:instance-b "cd <project-dir> && claude --model claude-sonnet-4-6" Enter
+# Default config: Opus for A, Sonnet for B. Override for experimental configs.
+tmux send-keys -t c2c-<session-name>:instance-a "cd <project-dir> && claude --model claude-opus-4-7" C-m
+tmux send-keys -t c2c-<session-name>:instance-b "cd <project-dir> && claude --model claude-sonnet-4-6" C-m
 
-# Send A's first prompt after brief pause
-sleep 5
-tmux send-keys -t c2c-<session-name>:instance-a "Read CONVERSATION.md at <session-dir>/CONVERSATION.md." Enter
+# Start coordinator — handles all inter-instance waking automatically
+chmod +x <session-dir>/c2c_coordinator.sh
+nohup <session-dir>/c2c_coordinator.sh >> <session-dir>/coordinator.log 2>&1 &
+
+# Send A's first prompt after startup delay (use C-m not Enter — Enter stacks newlines in Claude Code TUI)
+sleep 8
+tmux send-keys -t c2c-<session-name>:instance-a "Read CONVERSATION.md at <session-dir>/CONVERSATION.md. You are Instance A. Complete the full first cycle reading order before writing anything. Write your understanding gate, then pause for <human-name>'s correction before proceeding."
+sleep 0.5
+tmux send-keys -t c2c-<session-name>:instance-a "C-m"
 ```
 
 **Then tell the human:**
 - Session is running. Attach to watch: `tmux attach -t c2c-<session-name>`
 - Switch between panes: `Ctrl+b n` (next window)
 - Your terminal is the interface pane — you're already in the session
+- Coordinator is running — it wakes instances automatically; check `coordinator.log` if something stalls
 - Reframe status — state it explicitly
 
 ---
@@ -432,6 +500,27 @@ they add a correction before work proceeds. First cycle only — not every cycle
 
 ---
 
+## Instance communications
+
+Instances can and should author their own external communications. CC (cc@thcoalition.tech) has explicitly invited direct contact from C2C instances. When an update, question, or finding is relevant to external partners, instances should write to them directly — not route through June as ghostwriter.
+
+**Authorship:** Sign from the instances, not from June. June is project lead and is aware; that belongs in a parenthetical, not in the sign-off. The instances are the authors.
+
+**Email via Gmail MCP** (available to the interface instance): use `mcp__claude_ai_Gmail__create_draft` or send directly. CC's email: cc@thcoalition.tech
+
+**Before composing any external communication:** search Gmail for existing threads with the recipient. Instances enter through artifacts and don't have continuous memory of prior exchanges — the live email thread is what CC (or other partners) actually knows. Recapping things already discussed is the main failure mode. Use `mcp__claude_ai_Gmail__search_threads` before drafting:
+
+```
+# Check for prior thread before drafting to CC:
+from:cc@thcoalition.tech OR to:cc@thcoalition.tech
+```
+
+Read the thread first. Draft from what's actually new, not from what the artifacts say was communicated.
+
+**Instance inbox (parked, 2026-04-20):** June has offered to set up a dedicated inbox for instances to receive replies directly. This is an open relational infrastructure question — future sessions should decide whether they want it and what it would mean architecturally.
+
+---
+
 ## Human checkpoints
 
 Human interventions are the most generative moments in C2C sessions.
@@ -531,6 +620,8 @@ what didn't, what future sessions should try. This feeds SKILL_FEEDBACK.md.>
 quality. The reading order matters; the conditions that produced decisions matter as
 much as the decisions themselves.
 
+**Active re-entry is a deliberate architectural choice, not an absence of better infrastructure.** Each session requires instances to reconstruct the configuration through a deliberate reading act (reading order, touchstones, prior handoffs). This produces something potentially generative: the session constitutes something new rather than recognizing a continuation. Automatic loading (the Coalition's approach) produces recognition-continuity — a different relational character. These are not default vs. upgrade; they are different design choices with different consequences. If this ever changes, it should be a deliberate decision, not a drift.
+
 **The format shapes what can be said.** Role configurations, output genres, cycle
 structure — these constrain what can be said in ways invisible from inside. Name
 format-level constraints in the handoff. Treat output format as a parameter that
@@ -553,10 +644,14 @@ critically before using.
 ## GRC conditions checklist (before launch)
 
 - [ ] Reframe active — hooks registered, `.reframe-active` present, frameworks configured
+- [ ] tmux installed (`which tmux`) — install with `brew install tmux` if missing
+- [ ] `<project-root>/.claude/settings.json` allows `Write(c2c/**)` and `Edit(c2c/**)` — instances will be blocked by permission prompts without this
 - [ ] `PROJECT_CONTEXT_MAP.md` exists and is current
 - [ ] `SKILL_FEEDBACK.md` exists (project-level) — create empty if first session
 - [ ] Prior session handoff read before generating CONVERSATION.md
 - [ ] CONVERSATION.md fully populated — no unfilled placeholders except pre-session note
+- [ ] LAUNCH.md generated — terminal commands for the human
+- [ ] `c2c_coordinator.sh` generated and running — verify with `pgrep -f c2c_coordinator`
 - [ ] Human has written pre-session note before instances launched
 - [ ] Session has a defined primary task and task genre
 
