@@ -23,6 +23,13 @@ import json
 import argparse
 import os
 
+# Ensure script's directory is on sys.path so sibling modules (stylometry,
+# perplexity, embeddings, diff_analysis) import reliably regardless of cwd
+# or how Python is invoked.
+_SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+
 import textstat
 import nltk
 
@@ -340,7 +347,8 @@ def apply_profile(profile: dict, genre: str = None):
 # Calibration: analyze a corpus and generate a starter profile
 # ---------------------------------------------------------------------------
 
-def calibrate_from_samples(sample_dir: str, output_path: str = None):
+def calibrate_from_samples(sample_dir: str, output_path: str = None,
+                           genre: str = None):
     """
     Analyze a directory of writing samples and generate a voice profile
     with thresholds derived from the writer's actual patterns.
@@ -351,6 +359,14 @@ def calibrate_from_samples(sample_dir: str, output_path: str = None):
 
     The qualitative section is left as a skeleton — the LLM fills it in
     by reading the samples and extracting voice characteristics.
+
+    Genre-specific calibration:
+        If `genre` is provided AND the output path resolves to an existing
+        profile, the calibration is written into
+        profile["genres"][genre]["stylometry"] (preserving the rest of the
+        profile). The user-level stylometry block is NOT modified. This is
+        how per-genre centroids are bootstrapped from a curated sample set
+        (e.g., several revised grant drafts for genre='grant_application').
     """
     import glob
     import statistics
@@ -547,6 +563,52 @@ def calibrate_from_samples(sample_dir: str, output_path: str = None):
             print("  Embeddings: skipped (fastembed not available or calibration returned no data).")
     except ImportError:
         print("  Embeddings: skipped (embeddings.py not found).", file=sys.stderr)
+
+    # Genre-mode calibration: merge the computed stylometry into an existing
+    # profile under genres[genre].stylometry, leaving root stylometry alone.
+    if genre:
+        if not os.path.isfile(output_path):
+            print(f"Error: --calibrate --genre requires --output (or default path) to "
+                  f"point at an EXISTING user profile. Not found: {output_path}",
+                  file=sys.stderr)
+            sys.exit(1)
+        try:
+            with open(output_path, "r", encoding="utf-8") as f:
+                existing = json.load(f)
+        except (OSError, json.JSONDecodeError) as e:
+            print(f"Error: Could not read existing profile at {output_path}: {e}",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        if "genres" not in existing or not isinstance(existing.get("genres"), dict):
+            existing["genres"] = {}
+        if genre not in existing["genres"] or not isinstance(existing["genres"][genre], dict):
+            existing["genres"][genre] = {
+                "description": f"Auto-created by --calibrate --genre {genre}",
+            }
+
+        # Build a stylometry block for the genre. Use the same structure as
+        # root stylometry, sourced from the samples we just analyzed.
+        genre_stylo = profile.get("stylometry")
+        if genre_stylo is None:
+            print(f"Error: stylometry calibration produced no data; cannot seed "
+                  f"genre '{genre}'. Check sample directory for readable text.",
+                  file=sys.stderr)
+            sys.exit(1)
+        # Stamp this as a genre centroid (so downstream code can treat it
+        # differently from a single-sample bootstrap).
+        genre_stylo = dict(genre_stylo)
+        genre_stylo.setdefault("revision_count", 0)
+        existing["genres"][genre]["stylometry"] = genre_stylo
+
+        with open(output_path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, indent=2, ensure_ascii=False)
+
+        print(f"\n  Genre stylometry written to: {output_path}")
+        print(f"  Wrote: profile.genres.{genre}.stylometry "
+              f"(from {len(samples)} sample(s), {profile['stylometry'].get('calibration_word_count', 0)} words)")
+        print(f"  Note: user-level stylometry NOT modified.")
+        return
 
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(profile, f, indent=2, ensure_ascii=False)
@@ -972,6 +1034,158 @@ def analyze_front_loading(text: str, raw_lines, body_lines, body_line_map) -> di
 
 
 # ---------------------------------------------------------------------------
+# Paragraph and cohesion analysis (added 2026-05)
+# ---------------------------------------------------------------------------
+
+def analyze_paragraphs(text: str) -> dict:
+    """Paragraph-level structural metrics.
+
+    Splits text into paragraphs by double newlines, skipping anything under 5 words
+    (likely headers or empty lines). For each paragraph, records sentence count,
+    first-sentence length (proxy for topic sentence weight), and last-sentence
+    length (proxy for landing weight).
+    """
+    paras = [p.strip() for p in re.split(r'\n{2,}', text.strip()) if p.strip()]
+    paragraphs = []
+    for p in paras:
+        words = p.split()
+        if len(words) < 5:
+            continue
+        sents = sent_tokenize(p)
+        if not sents:
+            continue
+        first_sent_words = len(sents[0].split())
+        last_sent_words = len(sents[-1].split())
+        paragraphs.append({
+            "sentence_count": len(sents),
+            "first_sentence_words": first_sent_words,
+            "last_sentence_words": last_sent_words,
+        })
+
+    if not paragraphs:
+        return {
+            "paragraph_count": 0,
+            "avg_sentences_per_paragraph": 0.0,
+            "paragraph_length_stdev": 0.0,
+            "short_paragraph_count": 0,
+            "long_paragraph_count": 0,
+            "first_sentence_lengths": [],
+            "last_sentence_lengths": [],
+            "avg_first_sentence_words": 0.0,
+            "avg_last_sentence_words": 0.0,
+        }
+
+    sentence_counts = [p["sentence_count"] for p in paragraphs]
+    first_lens = [p["first_sentence_words"] for p in paragraphs]
+    last_lens = [p["last_sentence_words"] for p in paragraphs]
+    mean_sc = sum(sentence_counts) / len(sentence_counts)
+    var_sc = sum((x - mean_sc) ** 2 for x in sentence_counts) / len(sentence_counts)
+    stdev_sc = var_sc ** 0.5
+
+    return {
+        "paragraph_count": len(paragraphs),
+        "avg_sentences_per_paragraph": round(mean_sc, 2),
+        "paragraph_length_stdev": round(stdev_sc, 2),
+        "short_paragraph_count": sum(1 for c in sentence_counts if c == 1),
+        "long_paragraph_count": sum(1 for c in sentence_counts if c >= 5),
+        "first_sentence_lengths": first_lens,
+        "last_sentence_lengths": last_lens,
+        "avg_first_sentence_words": round(sum(first_lens) / len(first_lens), 1),
+        "avg_last_sentence_words": round(sum(last_lens) / len(last_lens), 1),
+    }
+
+
+# Common stop words for cohesion analysis (excluded from content word overlap)
+_COHESION_STOPWORDS = set("""
+the a an and or but if then else when where what who whom whose which that this these those
+i me my mine you your yours he him his she her hers it its we us our ours they them their theirs
+is am are was were be been being have has had do does did will would shall should can could may
+might must of in on at to for with by from as into about against between through during before
+after above below up down out off over under again further once here there only own same so than
+too very just not no nor any all each every both few more most other some such own
+""".split())
+
+
+def _content_words(sentence: str) -> set:
+    """Extract content words from a sentence for cohesion comparison.
+
+    Tries POS tagging if nltk is available; falls back to heuristic
+    (lowercased words >3 chars, excluding stop words).
+    """
+    words = re.findall(r"[A-Za-z']+", sentence.lower())
+    try:
+        tagged = pos_tag(words)
+        content = {
+            w for w, t in tagged
+            if (t.startswith('NN') or t.startswith('JJ') or
+                (t.startswith('VB') and t not in ('VBP', 'VBZ')))
+            and w not in _COHESION_STOPWORDS and len(w) > 3
+        }
+        if content:
+            return content
+    except Exception:
+        pass
+    return {w for w in words if w not in _COHESION_STOPWORDS and len(w) > 3}
+
+
+def analyze_cohesion(text: str) -> dict:
+    """Sentence-to-sentence cohesion proxy via lexical chain density.
+
+    For each adjacent sentence pair, compute content word overlap ratio.
+    Low overlap (< 0.1) flags potential cohesion breaks where adjacent
+    sentences share no referential grounding.
+    """
+    sentences = sent_tokenize(text)
+    if len(sentences) < 2:
+        return {
+            "mean_adjacency_overlap": 0.0,
+            "low_cohesion_pair_count": 0,
+            "low_cohesion_pairs": [],
+            "cohesion_score": 0.0,
+            "total_pairs": 0,
+        }
+
+    overlaps = []
+    low_pairs = []
+    for i in range(len(sentences) - 1):
+        s1, s2 = sentences[i], sentences[i + 1]
+        c1, c2 = _content_words(s1), _content_words(s2)
+        if not c1 or not c2:
+            continue
+        shared = c1 & c2
+        avg_size = (len(c1) + len(c2)) / 2
+        overlap = len(shared) / avg_size if avg_size > 0 else 0.0
+        overlaps.append(overlap)
+        if overlap < 0.1:
+            low_pairs.append({
+                "sent1_preview": s1[:80] + ('...' if len(s1) > 80 else ''),
+                "sent2_preview": s2[:80] + ('...' if len(s2) > 80 else ''),
+                "overlap": round(overlap, 3),
+            })
+
+    if not overlaps:
+        return {
+            "mean_adjacency_overlap": 0.0,
+            "low_cohesion_pair_count": 0,
+            "low_cohesion_pairs": [],
+            "cohesion_score": 0.0,
+            "total_pairs": 0,
+        }
+
+    mean_overlap = sum(overlaps) / len(overlaps)
+    # Cohesion score: 0–10 scale (0.4+ overlap = 10, 0 overlap = 0)
+    score = min(10.0, max(0.0, mean_overlap * 25))
+
+    return {
+        "mean_adjacency_overlap": round(mean_overlap, 3),
+        "low_cohesion_pair_count": len(low_pairs),
+        "low_cohesion_pairs": low_pairs[:5],
+        "cohesion_score": round(score, 1),
+        "total_pairs": len(overlaps),
+    }
+
+
+# ---------------------------------------------------------------------------
 # Flagged sentences collector
 # ---------------------------------------------------------------------------
 
@@ -1258,12 +1472,33 @@ def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
 # Learning loop: update profile from revision pair
 # ---------------------------------------------------------------------------
 
-def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_path: str):
+def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_path: str,
+                        notes: str = "", update_profile: bool = True,
+                        genre: str = None):
     """
     Compare an agent first draft to a human-revised final draft.
-    Updates the profile's stylometry, perplexity, and embedding fingerprints
-    via exponential moving average. Prints a revision guidance report showing
-    what shifted and in which direction.
+
+    Pipeline:
+      1. Diff analysis \u2014 sentence-level change classification, paragraph reorder detection
+      2. Quantitative update \u2014 stylometry, perplexity, embeddings via EMA
+      3. Paragraph + cohesion metrics \u2014 structural and sentence-to-sentence flow comparison
+      4. Qualitative analysis prompt \u2014 guidance for the agent's CDA sweep
+
+    If update_profile is False (--quantitative mode), no profile changes are written.
+
+    Genre/voice separation:
+        When `genre` is specified and profile["genres"][genre]["stylometry"]
+        exists, the revision shift is decomposed into genre-direction and
+        voice-direction components. The genre centroid absorbs the genre
+        component; the user centroid absorbs only the voice residual.
+
+        When `genre` is specified but no genre centroid exists yet, the genre
+        centroid is bootstrapped from the final draft's stylometry (seeded
+        with revision_count = 1) and the user centroid update follows the
+        original (full-shift) behavior \u2014 same as if genre were not specified.
+
+        When `genre` is None, behavior is unchanged: user centroid absorbs
+        the full revision shift via EMA.
     """
     try:
         from stylometry import compute_stylometry, compare_stylometry, update_profile_stylometry
@@ -1286,24 +1521,144 @@ def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_pa
     with open(final_draft_path, "r", encoding="utf-8") as f:
         final_text = f.read()
 
-    # --- Stylometry ---
-    first_stylo = compute_stylometry(first_text)
-    final_stylo = compute_stylometry(final_text)
-
-    stylo_comparison = compare_stylometry(first_stylo, final_stylo, profile["stylometry"])
-
-    # Print report
     sep = "\u2550" * 51
+
+    # Print report header
     print(f"\n{sep}")
     print("  REVISION LEARNING REPORT")
     print(sep)
     print(f"\n  First draft:  {os.path.basename(first_draft_path)}")
     print(f"  Final draft:  {os.path.basename(final_draft_path)}")
     print(f"  Profile:      {os.path.basename(profile_path)}")
-    print(f"\n  STYLOMETRY")
-    print(f"  {stylo_comparison['summary']}")
+    if notes:
+        print(f"  Notes:        {notes}")
+    if not update_profile:
+        print(f"  Mode:         QUANTITATIVE ONLY (no profile update)")
 
-    updated = update_profile_stylometry(profile, first_stylo, final_stylo)
+    # --- Phase 1: Diff analysis ---
+    diff_result = None
+    try:
+        from diff_analysis import compute_diff, format_diff_report
+        diff_result = compute_diff(first_text, final_text)
+        print(format_diff_report(diff_result))
+    except ImportError:
+        print("\n  (diff_analysis module not available \u2014 skipping structural diff)")
+
+    # --- Phase 2: Stylometry ---
+    first_stylo = compute_stylometry(first_text)
+    final_stylo = compute_stylometry(final_text)
+
+    # Decide whether genre/voice decomposition applies. Three cases:
+    #   (a) no genre flag                 → original behavior
+    #   (b) genre flag, genre centroid exists → decompose, update both
+    #   (c) genre flag, no genre centroid → bootstrap genre, update user fully
+    genre_centroid = None
+    bootstrap_genre = False
+    if genre:
+        genre_block = profile.get("genres", {}).get(genre, {}) or {}
+        genre_centroid = genre_block.get("stylometry")
+        if genre_centroid is None:
+            bootstrap_genre = True
+
+    if genre and not bootstrap_genre and genre_centroid is not None:
+        # ----- Case (b): decompose -----
+        try:
+            from genre_separation import (
+                decompose_stylometric_shift,
+                update_genre_centroid_via_ema,
+                update_user_centroid_via_ema_voice_only,
+                format_decomposition_report,
+            )
+        except ImportError:
+            print("Warning: genre_separation.py not found — falling back to "
+                  "non-decomposed update.", file=sys.stderr)
+            stylo_comparison = compare_stylometry(first_stylo, final_stylo, profile["stylometry"])
+            print(f"\n  STYLOMETRY")
+            print(f"  {stylo_comparison['summary']}")
+            updated = update_profile_stylometry(profile, first_stylo, final_stylo)
+        else:
+            from stylometry import _ema_alpha, generate_style_notes
+            user_centroid = profile["stylometry"]
+            decomp = decompose_stylometric_shift(
+                user_centroid, genre_centroid, first_stylo, final_stylo
+            )
+            print()
+            print(format_decomposition_report(decomp, genre))
+
+            # Apply EMAs
+            user_rev_count = user_centroid.get("revision_count", 0)
+            genre_rev_count = genre_centroid.get("revision_count", 0)
+            user_alpha = _ema_alpha(user_rev_count)
+            genre_alpha = _ema_alpha(genre_rev_count)
+
+            new_user_centroid = update_user_centroid_via_ema_voice_only(
+                user_centroid, decomp["voice_components"], user_alpha
+            )
+            new_user_centroid["revision_count"] = user_rev_count + 1
+            # Refresh style_notes occasionally (mirrors stylometry module schedule)
+            new_count = new_user_centroid["revision_count"]
+            if new_count == 1 or new_count % 3 == 0:
+                new_user_centroid["style_notes"] = generate_style_notes(new_user_centroid)
+
+            new_genre_centroid = update_genre_centroid_via_ema(
+                genre_centroid, decomp["genre_components"], genre_alpha
+            )
+            new_genre_centroid["revision_count"] = genre_rev_count + 1
+            new_g_count = new_genre_centroid["revision_count"]
+            if new_g_count == 1 or new_g_count % 3 == 0:
+                new_genre_centroid["style_notes"] = generate_style_notes(new_genre_centroid)
+
+            import copy as _copy
+            updated = _copy.deepcopy(profile)
+            updated["stylometry"] = new_user_centroid
+            updated.setdefault("genres", {})
+            if genre not in updated["genres"] or not isinstance(updated["genres"][genre], dict):
+                updated["genres"][genre] = {}
+            updated["genres"][genre]["stylometry"] = new_genre_centroid
+
+            print(
+                f"\n  Profile updated: genre '{genre}' centroid "
+                f"(rev count: {new_genre_centroid['revision_count']}), "
+                f"user centroid (rev count: {new_user_centroid['revision_count']})"
+            )
+            # Mark the path we took so the writer at the end of the function
+            # knows to persist the genre block (not just root stylometry).
+            updated["_genre_separation_applied"] = genre
+
+    elif genre and bootstrap_genre:
+        # ----- Case (c): bootstrap genre centroid from this revision pair -----
+        try:
+            from genre_separation import seed_genre_centroid_from_stylometry
+        except ImportError:
+            print("Warning: genre_separation.py not found — bootstrapping is "
+                  "unavailable. Falling back to non-decomposed update.",
+                  file=sys.stderr)
+            stylo_comparison = compare_stylometry(first_stylo, final_stylo, profile["stylometry"])
+            print(f"\n  STYLOMETRY")
+            print(f"  {stylo_comparison['summary']}")
+            updated = update_profile_stylometry(profile, first_stylo, final_stylo)
+        else:
+            print(f"\n  STYLOMETRY (bootstrapping genre centroid '{genre}' from this revision pair)")
+            stylo_comparison = compare_stylometry(first_stylo, final_stylo, profile["stylometry"])
+            print(f"  {stylo_comparison['summary']}")
+            seeded = seed_genre_centroid_from_stylometry(final_stylo)
+            updated = update_profile_stylometry(profile, first_stylo, final_stylo)
+            updated.setdefault("genres", {})
+            if genre not in updated["genres"] or not isinstance(updated["genres"][genre], dict):
+                updated["genres"][genre] = {
+                    "description": f"Auto-created by --learn --genre {genre}",
+                }
+            updated["genres"][genre]["stylometry"] = seeded
+            updated["_genre_separation_applied"] = genre
+            print(f"\n  Bootstrapped: profile.genres.{genre}.stylometry "
+                  f"(revision_count = 1). Subsequent --learn --genre {genre} runs "
+                  f"will decompose against this centroid.")
+    else:
+        # ----- Case (a): original behavior -----
+        stylo_comparison = compare_stylometry(first_stylo, final_stylo, profile["stylometry"])
+        print(f"\n  STYLOMETRY")
+        print(f"  {stylo_comparison['summary']}")
+        updated = update_profile_stylometry(profile, first_stylo, final_stylo)
 
     # --- Perplexity (optional) ---
     if "perplexity" in updated:
@@ -1333,29 +1688,619 @@ def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_pa
         except ImportError:
             pass
 
-    # Save updated profile — write back only user-profile fields, not merged base data.
-    # If the profile was a base+user merge, _user_profile_path points to the user file.
-    # If it's a standalone profile, profile_path is used directly.
-    write_path = updated.get("_user_profile_path", profile_path)
+    # --- Phase 3: Paragraph + cohesion comparison ---
+    first_para = analyze_paragraphs(first_text)
+    final_para = analyze_paragraphs(final_text)
+    first_coh = analyze_cohesion(first_text)
+    final_coh = analyze_cohesion(final_text)
 
-    # Reload the user-only profile from disk to avoid writing base data into user file
-    with open(write_path, "r", encoding="utf-8") as f:
-        user_only = json.load(f)
+    print(f"\n  PARAGRAPH STRUCTURE")
+    print(f"  Paragraphs:        {first_para['paragraph_count']} → {final_para['paragraph_count']}")
+    print(f"  Avg sentences/para: {first_para['avg_sentences_per_paragraph']} → {final_para['avg_sentences_per_paragraph']}")
+    print(f"  Avg first-sent words: {first_para['avg_first_sentence_words']} → {final_para['avg_first_sentence_words']} (topic sentence weight)")
+    print(f"  Avg last-sent words:  {first_para['avg_last_sentence_words']} → {final_para['avg_last_sentence_words']} (landing weight)")
+    print(f"  Single-sentence paras: {first_para['short_paragraph_count']} → {final_para['short_paragraph_count']}")
+    print(f"  Long paras (5+ sents): {first_para['long_paragraph_count']} → {final_para['long_paragraph_count']}")
 
-    # Copy updated computational sections back into user-only profile
-    for key in ("stylometry", "perplexity", "embeddings"):
-        if key in updated:
-            user_only[key] = updated[key]
+    print(f"\n  COHESION (sentence-to-sentence lexical chain density)")
+    print(f"  Mean adjacency overlap: {first_coh['mean_adjacency_overlap']} → {final_coh['mean_adjacency_overlap']}")
+    print(f"  Cohesion score (0-10):  {first_coh['cohesion_score']} → {final_coh['cohesion_score']}")
+    print(f"  Low-cohesion pairs:     {first_coh['low_cohesion_pair_count']} → {final_coh['low_cohesion_pair_count']}")
+    if final_coh['low_cohesion_pairs']:
+        print(f"\n  Final-draft cohesion breaks (low overlap with prior sentence):")
+        for p in final_coh['low_cohesion_pairs'][:3]:
+            print(f"    overlap={p['overlap']}")
+            print(f"      [prior]: {p['sent1_preview']}")
+            print(f"      [next]:  {p['sent2_preview']}")
 
-    with open(write_path, "w", encoding="utf-8") as f:
-        json.dump(user_only, f, indent=2, ensure_ascii=False)
+    # --- Profile update (skip in --quantitative mode) ---
+    if update_profile:
+        # Save updated profile — write back only user-profile fields, not merged base data.
+        # If the profile was a base+user merge, _user_profile_path points to the user file.
+        # If it's a standalone profile, profile_path is used directly.
+        write_path = updated.get("_user_profile_path", profile_path)
 
-    revision_count = updated["stylometry"]["revision_count"]
-    print(f"\n  Profile updated. Revision count: {revision_count}")
-    notes_preview = updated["stylometry"].get("style_notes", "")[:160]
-    if notes_preview:
-        print(f"  Style notes: {notes_preview}...")
-    print()
+        # Reload the user-only profile from disk to avoid writing base data into user file
+        with open(write_path, "r", encoding="utf-8") as f:
+            user_only = json.load(f)
+
+        # Copy updated computational sections back into user-only profile
+        for key in ("stylometry", "perplexity", "embeddings"):
+            if key in updated:
+                user_only[key] = updated[key]
+
+        # If genre/voice separation ran (or genre bootstrap), persist the
+        # genre stylometry block into the user-only profile too.
+        applied_genre = updated.get("_genre_separation_applied")
+        if applied_genre and "genres" in updated:
+            user_only.setdefault("genres", {})
+            updated_genre_block = updated["genres"].get(applied_genre, {}) or {}
+            existing_genre_block = user_only["genres"].get(applied_genre, {}) or {}
+            # Preserve everything in the existing genre block (description,
+            # word_count_target, threshold_overrides, genre_moves, qualitative,
+            # ...); only refresh the stylometry sub-block.
+            merged_genre_block = dict(existing_genre_block)
+            if isinstance(updated_genre_block, dict) and "stylometry" in updated_genre_block:
+                merged_genre_block["stylometry"] = updated_genre_block["stylometry"]
+            # If the existing block is empty (genre is new), carry over
+            # the description seed we set above.
+            if not merged_genre_block.get("description") and updated_genre_block.get("description"):
+                merged_genre_block["description"] = updated_genre_block["description"]
+            user_only["genres"][applied_genre] = merged_genre_block
+
+        with open(write_path, "w", encoding="utf-8") as f:
+            json.dump(user_only, f, indent=2, ensure_ascii=False)
+
+        revision_count = updated["stylometry"]["revision_count"]
+        print(f"\n  Profile updated. Revision count: {revision_count}")
+        notes_preview = updated["stylometry"].get("style_notes", "")[:160]
+        if notes_preview:
+            print(f"  Style notes: {notes_preview}...")
+        if applied_genre:
+            g_count = (updated.get("genres", {})
+                              .get(applied_genre, {})
+                              .get("stylometry", {})
+                              .get("revision_count", 0))
+            print(f"  Genre '{applied_genre}' centroid revision count: {g_count}")
+    else:
+        print(f"\n  (--quantitative mode: profile NOT updated)")
+
+    # --- Phase 4: Qualitative analysis prompt ---
+    print(f"\n{sep}")
+    print("  QUALITATIVE ANALYSIS REQUIRED")
+    print(sep)
+    print("""
+  Agent: read both draft files in full and the diff above, then perform a
+  CDA sweep at each level. The quantitative update only captures surface
+  metrics; the qualitative analysis is where the actual learning happens.
+
+  CLAUSE / SENTENCE LEVEL
+  □ Transitivity: were material processes ('I built', 'I traced') substituted
+    for relational ('this is', 'these are')? Or vice versa?
+  □ Modality: were epistemic hedges added or removed (might, could, appears)?
+  □ Nominalization: were verb forms converted to nouns or back? Less is
+    generally clearer, UNLESS the nominal form is an established academic
+    concept the audience already holds, or denominalization would confuse.
+  □ Given/new flow: does each revised sentence's subject pick up from the
+    prior sentence's new information? Flag adjacent sentences with no shared
+    referent — these are cohesion breaks (see metrics above).
+  □ Jargon precision: were imprecise theory labels (apparatus, recognition,
+    dispositif) replaced with more specific mechanisms? Or vice versa where
+    the term was load-bearing shorthand?
+
+  PARAGRAPH LEVEL
+  □ Topic sentence position: did revisions move claims to sentence-initial?
+  □ Evidence structure: did body sentences become more specific/grounded?
+  □ Landing weight: did paragraph endings gain rhetorical force?
+  □ One-focus discipline: were over-loaded paragraphs split or refocused?
+
+  DOCUMENT LEVEL
+  □ Structural reorganization: paragraphs reordered? (see paragraph moves)
+  □ Arc: did the argument's overall shape change, or just the prose?
+  □ Synthesis moves: do connections move 'upward and outward' (these threads
+    open new territory together) rather than 'inward' (these are all examples
+    of the same pattern)?
+
+  PROFILE ACTIONS
+  □ Map each major change type to existing qualitative checks.
+    Which checks predicted the change? (signals they're working.)
+    Which changes had no corresponding check? (gaps in the profile.)
+  □ For each gap: draft a proposed qualitative check addition, framed as
+    collaborative motivation (why this matters), not compliance enforcement.
+  □ Present proposed additions to the user for approval before updating.
+
+  WORKFLOW NOTE
+  □ If this revision was a structural pass (see diff pattern above), weight
+    sentence-level signals lower — they often reflect collateral damage from
+    reorganization, not deliberate voice choices. The reverse is also true:
+    fine-grained refinement passes carry the strongest voice signal at the
+    sentence level.
+""")
+
+
+# ---------------------------------------------------------------------------
+# Multi-version learning loop (--learn-sequence)
+# ---------------------------------------------------------------------------
+
+def _classify_transition_auto(diff_result: dict) -> str:
+    """
+    Auto-classify a transition between two consecutive versions as
+    'structural', 'fine-grained', or 'mixed'.
+
+    Heuristic:
+      - structural: change_rate >50% AND structural pattern (paragraph moves)
+      - fine-grained: change_rate <30% OR pattern is 'local' with low change rate
+      - mixed: in between
+
+    Errs on the side of 'structural' for ambiguous cases — safer to skip than
+    over-weight a structural pair into the EMA.
+    """
+    change_rate = diff_result.get("change_rate", 0.0)
+    pattern = diff_result.get("structural_vs_local", "structural")
+
+    # Strong structural signal: >50% changed AND structural pattern detected.
+    if change_rate > 50 and pattern == "structural":
+        return "structural"
+    # Strong structural signal: very high change rate even without paragraph
+    # moves likely indicates large rewrites — treat as structural.
+    if change_rate > 60:
+        return "structural"
+    # Strong fine-grained signal: low change rate AND local pattern.
+    if change_rate < 30 and pattern == "local":
+        return "fine-grained"
+    # Local pattern with somewhat higher change rate is still mostly
+    # sentence-level — but be conservative and call this mixed.
+    if pattern == "local" and change_rate < 40:
+        return "fine-grained"
+    # Pure structural pattern at lower change rate is still architectural.
+    if pattern == "structural":
+        return "structural"
+    # Fallback: ambiguous middle band.
+    return "mixed"
+
+
+def _filename_to_version_token(name: str) -> str:
+    """
+    Reduce a filename like 'APPLICATION_DRAFT_V14.md' to a normalized token
+    'v14' for lenient manifest matching. Returns lowercased basename without
+    extension if no version pattern is detected.
+    """
+    base = os.path.basename(name)
+    base_no_ext = os.path.splitext(base)[0]
+    # Look for 'V' or 'v' followed by digits (with optional letter suffix like 13b)
+    m = re.search(r"[Vv](\d+[a-zA-Z]?)", base_no_ext)
+    if m:
+        return "v" + m.group(1).lower()
+    # Common case: APPLICATION_DRAFT.md is treated as v3 (matching the user's
+    # convention that the unsuffixed file is the earliest version in scope).
+    # We don't hard-code this — return the bare lowercased stem instead and
+    # let manifest matching be lenient.
+    return base_no_ext.lower()
+
+
+def parse_version_manifest(manifest_path: str) -> dict:
+    """
+    Parse a VERSION_MANIFEST.md file. Returns a dict keyed by
+    (from_token, to_token) -> {'type': str, 'author': str, 'notes': str}.
+
+    Expected table format:
+        | From | To | Type | Author | Notes |
+        |------|-----|------|--------|-------|
+        | v3 | v4 | structural | AI | ... |
+        | v5 | v6 | fine-grained | June | ... |
+
+    Tolerates extra whitespace, missing columns, and varying column order.
+    """
+    classifications = {}
+    if not manifest_path or not os.path.isfile(manifest_path):
+        return classifications
+
+    try:
+        with open(manifest_path, "r", encoding="utf-8") as f:
+            content = f.read()
+    except OSError:
+        return classifications
+
+    # Find table rows: lines that start with | and contain at least 3 |s
+    row_re = re.compile(r"^\s*\|(.+)\|\s*$")
+    sep_re = re.compile(r"^\s*\|[\s\-:|]+\|\s*$")
+
+    rows = []
+    for line in content.splitlines():
+        if sep_re.match(line):
+            continue
+        m = row_re.match(line)
+        if not m:
+            continue
+        cells = [c.strip() for c in m.group(1).split("|")]
+        if len(cells) < 3:
+            continue
+        rows.append(cells)
+
+    if not rows:
+        return classifications
+
+    # First row should be header; locate column indices for From, To, Type.
+    header = [h.lower() for h in rows[0]]
+    try:
+        from_idx = header.index("from")
+        to_idx = header.index("to")
+        type_idx = header.index("type")
+    except ValueError:
+        # Fall back to fixed positions
+        from_idx, to_idx, type_idx = 0, 1, 2
+
+    author_idx = None
+    notes_idx = None
+    for i, h in enumerate(header):
+        if h == "author":
+            author_idx = i
+        elif h in ("notes", "intent", "note"):
+            notes_idx = i
+
+    for cells in rows[1:]:
+        if max(from_idx, to_idx, type_idx) >= len(cells):
+            continue
+        from_tok = cells[from_idx].lower().strip()
+        to_tok = cells[to_idx].lower().strip()
+        ttype = cells[type_idx].lower().strip()
+        # Normalize 'fine grained', 'fine_grained' -> 'fine-grained'
+        ttype = ttype.replace("_", "-").replace(" ", "-")
+        if ttype not in ("structural", "fine-grained", "mixed"):
+            # Unknown classification — skip rather than guess
+            continue
+        author = cells[author_idx].strip() if author_idx is not None and author_idx < len(cells) else ""
+        notes = cells[notes_idx].strip() if notes_idx is not None and notes_idx < len(cells) else ""
+        classifications[(from_tok, to_tok)] = {
+            "type": ttype,
+            "author": author,
+            "notes": notes,
+        }
+    return classifications
+
+
+def _lookup_manifest_classification(manifest: dict, from_path: str, to_path: str):
+    """
+    Look up a manifest classification for a pair of file paths. Returns the
+    classification dict, or None if no match. Lenient: matches tokens like
+    'v3' against 'APPLICATION_DRAFT_V3.md'.
+    """
+    if not manifest:
+        return None
+    from_tok = _filename_to_version_token(from_path)
+    to_tok = _filename_to_version_token(to_path)
+    # Exact token match
+    if (from_tok, to_tok) in manifest:
+        return manifest[(from_tok, to_tok)]
+    # Fall back: try matching on stem against any manifest token whose value
+    # is a prefix of the filename
+    from_base = os.path.splitext(os.path.basename(from_path))[0].lower()
+    to_base = os.path.splitext(os.path.basename(to_path))[0].lower()
+    for (mf, mt), val in manifest.items():
+        if (mf in from_base or from_base.endswith(mf)) and (mt in to_base or to_base.endswith(mt)):
+            return val
+    return None
+
+
+def _select_pairs_for_update(transitions: list, cap: int = 4) -> list:
+    """
+    Given a list of transition dicts (each with 'classification' key, in
+    sequence order), select up to `cap` fine-grained pairs sampled evenly
+    across the refinement phase.
+
+    If <= cap fine-grained pairs exist, return them all. If more, sample
+    first, last, and (cap - 2) interior points evenly spaced.
+    """
+    fine = [t for t in transitions if t["classification"] == "fine-grained"]
+    if len(fine) <= cap:
+        return fine
+    # Even sampling: indices 0, last, and interior points
+    n = len(fine)
+    if cap <= 1:
+        return [fine[0]]
+    if cap == 2:
+        return [fine[0], fine[-1]]
+    indices = [0]
+    interior_count = cap - 2
+    if interior_count > 0:
+        # Evenly spaced interior indices in (0, n-1)
+        step = (n - 1) / (interior_count + 1)
+        for k in range(1, interior_count + 1):
+            idx = int(round(k * step))
+            if idx <= 0:
+                idx = 1
+            if idx >= n - 1:
+                idx = n - 2
+            indices.append(idx)
+    indices.append(n - 1)
+    # De-duplicate while preserving order
+    seen = set()
+    unique = []
+    for i in indices:
+        if i not in seen:
+            seen.add(i)
+            unique.append(i)
+    return [fine[i] for i in unique]
+
+
+def _detect_phase_transition(transitions: list, window: int = 3):
+    """
+    Detect the index where the running classification flips from
+    majority-structural to majority-fine-grained over a sliding window of
+    `window` consecutive pairs. Returns the transition dict at the flip
+    point, or None if no clean flip is detected.
+    """
+    if len(transitions) < window:
+        return None
+
+    def majority(group):
+        struct = sum(1 for t in group if t["classification"] == "structural")
+        fine = sum(1 for t in group if t["classification"] == "fine-grained")
+        if struct > fine:
+            return "structural"
+        if fine > struct:
+            return "fine-grained"
+        return "mixed"
+
+    # Walk windows; find first flip from structural-majority to fine-majority
+    prev_majority = None
+    for i in range(len(transitions) - window + 1):
+        group = transitions[i:i + window]
+        maj = majority(group)
+        if prev_majority == "structural" and maj == "fine-grained":
+            # Flip happened within this window — call the first fine-grained
+            # pair in the window the transition point.
+            for t in group:
+                if t["classification"] == "fine-grained":
+                    return t
+            return group[0]
+        if maj in ("structural", "fine-grained"):
+            prev_majority = maj
+    return None
+
+
+def learn_from_sequence(
+    file_paths: list,
+    profile_path: str,
+    genre: str = None,
+    manifest_path: str = None,
+    dry_run: bool = False,
+    notes: str = "",
+):
+    """
+    Multi-version learning loop. Iterates over consecutive pairs in
+    file_paths, classifies each transition as structural / fine-grained /
+    mixed, and applies EMA updates only on fine-grained pairs (capped to
+    avoid over-weighting one application).
+
+    Algorithm (see module docs for full spec):
+      1. Read all files.
+      2. For each consecutive pair, run diff_analysis.compute_diff and
+         classify (manifest override > auto-classify).
+      3. Detect phase transition (sliding window majority flip).
+      4. Select up to 4 fine-grained pairs (sampled evenly).
+      5. If not dry_run, call learn_from_revision on each selected pair.
+      6. Print a revision trajectory report.
+    """
+    try:
+        from diff_analysis import compute_diff
+    except ImportError:
+        print("Error: diff_analysis.py not found. Cannot run --learn-sequence.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    if len(file_paths) < 2:
+        print("Error: --learn-sequence requires at least 2 files.", file=sys.stderr)
+        sys.exit(1)
+
+    # Verify all files exist
+    for p in file_paths:
+        if not os.path.isfile(p):
+            print(f"Error: File not found: {p}", file=sys.stderr)
+            sys.exit(1)
+    if not os.path.isfile(profile_path):
+        print(f"Error: Profile not found: {profile_path}", file=sys.stderr)
+        sys.exit(1)
+
+    # Parse manifest (may be empty)
+    manifest = parse_version_manifest(manifest_path) if manifest_path else {}
+    if manifest_path and not manifest:
+        print(f"  Warning: manifest at {manifest_path} produced no usable rows; "
+              f"falling back to auto-classification.", file=sys.stderr)
+
+    # Read all texts
+    texts = []
+    for p in file_paths:
+        with open(p, "r", encoding="utf-8") as fh:
+            texts.append(fh.read())
+
+    # Build transitions
+    transitions = []
+    for i in range(len(file_paths) - 1):
+        from_path = file_paths[i]
+        to_path = file_paths[i + 1]
+        from_label = _filename_to_version_token(from_path)
+        to_label = _filename_to_version_token(to_path)
+        diff = compute_diff(texts[i], texts[i + 1])
+
+        manifest_hit = _lookup_manifest_classification(manifest, from_path, to_path)
+        if manifest_hit is not None:
+            classification = manifest_hit["type"]
+            source = "manifest"
+        else:
+            classification = _classify_transition_auto(diff)
+            source = "auto"
+
+        transitions.append({
+            "index": i,
+            "from_path": from_path,
+            "to_path": to_path,
+            "from_label": from_label,
+            "to_label": to_label,
+            "diff": diff,
+            "classification": classification,
+            "classification_source": source,
+            "manifest_entry": manifest_hit,
+        })
+
+    # Detect phase transition
+    phase_transition = _detect_phase_transition(transitions)
+
+    # Select pairs for update
+    selected = _select_pairs_for_update(transitions, cap=4)
+
+    # Cohesion trajectory: compute first and final cohesion scores for context
+    try:
+        first_cohesion = analyze_cohesion(texts[0]).get("cohesion_score", None)
+        last_cohesion = analyze_cohesion(texts[-1]).get("cohesion_score", None)
+    except Exception:
+        first_cohesion = None
+        last_cohesion = None
+
+    # ---- Print trajectory report ----
+    sep = "═" * 51
+    print(f"\n{sep}")
+    print("  REVISION TRAJECTORY")
+    print(sep)
+
+    first_label = _filename_to_version_token(file_paths[0])
+    last_label = _filename_to_version_token(file_paths[-1])
+    print(f"\n  Sequence: {len(file_paths)} versions ({first_label} → {last_label})")
+    print(f"  Profile: {os.path.basename(profile_path)}")
+    print(f"  Genre: {genre if genre else 'none'}")
+    print(f"  Mode: {'dry-run' if dry_run else 'full'}")
+    if notes:
+        print(f"  Notes: {notes}")
+    if manifest_path:
+        if manifest:
+            print(f"  Manifest: {os.path.basename(manifest_path)} ({len(manifest)} rows)")
+        else:
+            print(f"  Manifest: {os.path.basename(manifest_path)} (unparsed, using auto-classification)")
+
+    # Transition classifications
+    print(f"\n  TRANSITION CLASSIFICATIONS")
+    for t in transitions:
+        diff = t["diff"]
+        cr = diff.get("change_rate", 0.0)
+        first_paras = diff.get("first_paragraph_count", "?")
+        final_paras = diff.get("final_paragraph_count", "?")
+        pattern = diff.get("structural_vs_local", "?")
+        cls_label = t["classification"].upper()
+        src_marker = " (manifest)" if t["classification_source"] == "manifest" else ""
+        pair_label = f"{t['from_label']} → {t['to_label']}"
+        # Pad label for alignment
+        print(
+            f"    {pair_label:<20} [{cls_label:<13}]{src_marker} "
+            f"change_rate {cr}%, paragraphs {first_paras}→{final_paras}, "
+            f"{pattern} pattern"
+        )
+
+    # Phase transition
+    print(f"\n  PHASE TRANSITION")
+    if phase_transition is not None:
+        pt_idx = phase_transition["index"]
+        pt_label = f"{phase_transition['from_label']} → {phase_transition['to_label']}"
+        print(f"    Detected at {pt_label}: shift from structural exploration to refinement.")
+        # Phase boundaries
+        struct_pairs = transitions[:pt_idx]
+        refine_pairs = transitions[pt_idx:]
+        if struct_pairs:
+            sp_first = struct_pairs[0]["from_label"]
+            sp_last = struct_pairs[-1]["to_label"]
+            print(f"    Structural phase: {sp_first}–{sp_last} ({len(struct_pairs)} pairs)")
+        else:
+            print(f"    Structural phase: (none — refinement starts at first transition)")
+        if refine_pairs:
+            rp_first = refine_pairs[0]["from_label"]
+            rp_last = refine_pairs[-1]["to_label"]
+            print(f"    Refinement phase: {rp_first}–{rp_last} ({len(refine_pairs)} pairs)")
+    else:
+        print(f"    No clean phase transition detected (sequence may be all structural, "
+              f"all fine-grained, or too short).")
+
+    # Selected pairs
+    fine_count = sum(1 for t in transitions if t["classification"] == "fine-grained")
+    print(f"\n  SELECTED PAIRS FOR LEARNING UPDATE")
+    if not selected:
+        print(f"    (none — no fine-grained transitions found)")
+    else:
+        # Annotate each selected pair with its position in the fine-grained sub-list
+        fine_list = [t for t in transitions if t["classification"] == "fine-grained"]
+        total_fine = len(fine_list)
+        for t in selected:
+            try:
+                fi = fine_list.index(t)
+            except ValueError:
+                fi = -1
+            if total_fine == 1:
+                annot = "only fine-grained pair"
+            elif fi == 0:
+                annot = "fine-grained, first refinement"
+            elif fi == total_fine - 1:
+                annot = "fine-grained, final"
+            else:
+                annot = "fine-grained, mid-refinement"
+            pair_label = f"{t['from_label']} → {t['to_label']}"
+            print(f"    [✓] {pair_label:<20} ({annot})")
+        print(f"    Total: {len(selected)} pairs (out of {fine_count} fine-grained; "
+              f"{'all included' if len(selected) == fine_count else 'sampled across refinement'})")
+
+    # Cohesion trajectory
+    print(f"\n  COHESION TRAJECTORY")
+    if first_cohesion is not None and last_cohesion is not None:
+        delta_word = "improved" if last_cohesion > first_cohesion else (
+            "decreased" if last_cohesion < first_cohesion else "unchanged"
+        )
+        print(f"    First version cohesion score: {first_cohesion}")
+        print(f"    Final version cohesion score: {last_cohesion} ({delta_word})")
+    else:
+        print(f"    (cohesion metric unavailable)")
+
+    # Profile updates
+    print(f"\n  PROFILE UPDATE")
+    if dry_run:
+        print(f"    --dry-run: profile NOT modified. {len(selected)} fine-grained "
+              f"pair(s) WOULD be applied.")
+    elif not selected:
+        print(f"    No fine-grained pairs selected; profile not modified.")
+    else:
+        print(f"    Applying {len(selected)} fine-grained pair(s) to profile via EMA "
+              f"(through learn_from_revision).")
+        for t in selected:
+            pair_label = f"{t['from_label']} → {t['to_label']}"
+            sub_notes = notes or ""
+            seq_tag = f"[--learn-sequence pair {pair_label}]"
+            combined_notes = (sub_notes + " " + seq_tag).strip()
+            try:
+                learn_from_revision(
+                    t["from_path"], t["to_path"], profile_path,
+                    notes=combined_notes,
+                    update_profile=True,
+                    genre=genre,
+                )
+            except SystemExit:
+                # learn_from_revision sys.exits on missing modules; re-raise
+                raise
+            except Exception as e:
+                print(f"    Error updating profile for pair {pair_label}: {e}",
+                      file=sys.stderr)
+
+    # Qualitative analysis prompt
+    print(f"\n{sep}")
+    print("  QUALITATIVE ANALYSIS REQUIRED")
+    print(sep)
+    print("""
+  Agent: read the refinement-phase versions and perform CDA sweep.
+  Focus on the SELECTED PAIRS above — those carry the highest voice signal.
+  Sentence-level changes in the structural phase often reflect collateral
+  damage from reorganization, not deliberate voice choices; weight them
+  lower in qualitative analysis.
+
+  □ Read each selected pair (FROM and TO) in full.
+  □ Identify clause/sentence-level moves the human made deliberately.
+  □ Map to existing qualitative checks; propose additions for gaps.
+  □ Present proposed additions to the user for approval.
+""")
 
 
 # ---------------------------------------------------------------------------
@@ -1454,12 +2399,136 @@ def main():
     )
     parser.add_argument(
         "--learn", nargs=2, metavar=("FIRST_DRAFT", "FINAL_DRAFT"),
-        help="Compare agent first draft to human-revised final; update profile stylometry"
+        help="Full learning loop — diff analysis + quantitative update + qualitative analysis prompt"
+    )
+    parser.add_argument(
+        "--quantitative", nargs=2, metavar=("FIRST_DRAFT", "FINAL_DRAFT"),
+        help="Quantitative comparison only (deltas, no profile update, no qualitative prompt)"
+    )
+    parser.add_argument(
+        "--diff", nargs=2, metavar=("FIRST_DRAFT", "FINAL_DRAFT"),
+        help="Structural diff only — sentence change classification + paragraph reorder detection"
+    )
+    parser.add_argument(
+        "--notes", type=str, default="",
+        help="Intent note for --learn run (e.g., 'structural pass', 'fine-grained finalization')"
+    )
+    parser.add_argument(
+        "--learn-sequence", nargs="*", metavar="FILE", dest="learn_sequence", default=None,
+        help="Multi-version learning loop. Pass 2+ files in revision order; auto-classifies each "
+             "transition as structural or fine-grained, applies EMA updates only on fine-grained pairs. "
+             "May be combined with --auto-discover (in which case the file list is supplied implicitly)."
+    )
+    parser.add_argument(
+        "--manifest", type=str, default=None,
+        help="Optional path to a VERSION_MANIFEST.md that explicitly tags transitions "
+             "(overrides auto-classification)"
+    )
+    parser.add_argument(
+        "--auto-discover", type=str, default=None, metavar="DIR", dest="auto_discover",
+        help="With --learn-sequence: auto-discover .md files in DIR matching --pattern, "
+             "sorted by --sort-by"
+    )
+    parser.add_argument(
+        "--pattern", type=str, default="*.md",
+        help="Glob pattern for --auto-discover (default: *.md)"
+    )
+    parser.add_argument(
+        "--sort-by", type=str, default="name", choices=["name", "mtime"], dest="sort_by",
+        help="Sort order for --auto-discover (default: name)"
+    )
+    parser.add_argument(
+        "--dry-run", action="store_true", dest="dry_run",
+        help="With --learn-sequence: report classifications and what WOULD be updated, "
+             "without writing to profile"
     )
     args = parser.parse_args()
 
-    # Learning mode (post-revision profile update)
-    if args.learn:
+    # Diff-only mode (no profile required)
+    if args.diff:
+        try:
+            from diff_analysis import compute_diff, format_diff_report
+        except ImportError:
+            print("Error: diff_analysis.py not found.", file=sys.stderr)
+            sys.exit(1)
+        first_path, final_path = args.diff
+        for p in (first_path, final_path):
+            if not os.path.isfile(p):
+                print(f"Error: File not found: {p}", file=sys.stderr)
+                sys.exit(1)
+        with open(first_path) as f:
+            first_text = f.read()
+        with open(final_path) as f:
+            final_text = f.read()
+        diff = compute_diff(first_text, final_text)
+        print(format_diff_report(diff))
+        return
+
+    # Multi-version learning mode (--learn-sequence)
+    if args.learn_sequence is not None or args.auto_discover:
+        # Auto-discover replaces explicit file list
+        file_paths = list(args.learn_sequence) if args.learn_sequence else []
+        if args.auto_discover:
+            import glob
+            if not os.path.isdir(args.auto_discover):
+                print(f"Error: --auto-discover directory not found: {args.auto_discover}",
+                      file=sys.stderr)
+                sys.exit(1)
+            pattern_path = os.path.join(args.auto_discover, args.pattern)
+            discovered = glob.glob(pattern_path)
+            if not discovered:
+                print(f"Error: No files matched {pattern_path}", file=sys.stderr)
+                sys.exit(1)
+            if args.sort_by == "mtime":
+                discovered.sort(key=lambda p: os.path.getmtime(p))
+            else:
+                # Natural-ish sort: split into (text, number) chunks so V2 < V10
+                def natkey(s):
+                    return [int(c) if c.isdigit() else c.lower()
+                            for c in re.split(r"(\d+)", os.path.basename(s))]
+                discovered.sort(key=natkey)
+            file_paths = discovered
+            print(f"  Auto-discovered {len(file_paths)} files in {args.auto_discover}",
+                  file=sys.stderr)
+
+        if len(file_paths) < 2:
+            parser.error("--learn-sequence requires at least 2 files (after --auto-discover)")
+
+        # Resolve profile (same logic as --learn)
+        if not args.profile:
+            discovered_path, count = discover_profile()
+            if discovered_path:
+                print(f"  Auto-discovered profile: {os.path.basename(discovered_path)}",
+                      file=sys.stderr)
+                args.profile = discovered_path
+            elif count > 1:
+                profiles_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "profiles")
+                available = sorted(
+                    f for f in os.listdir(profiles_dir)
+                    if f.endswith(".json") and f != "base.json"
+                )
+                print("Multiple profiles found. Use --profile to specify:", file=sys.stderr)
+                for p in available:
+                    print(f"  --profile profiles/{p}", file=sys.stderr)
+                sys.exit(1)
+            else:
+                parser.error("--learn-sequence requires --profile (no user profile found; "
+                             "run --calibrate first)")
+
+        learn_from_sequence(
+            file_paths,
+            profile_path=args.profile,
+            genre=args.genre,
+            manifest_path=args.manifest,
+            dry_run=args.dry_run,
+            notes=args.notes,
+        )
+        return
+
+    # Learning mode (full pipeline) OR quantitative-only mode
+    learn_args = args.learn or args.quantitative
+    if learn_args:
+        update_profile = bool(args.learn)  # --learn updates; --quantitative does not
         if not args.profile:
             # Try auto-discovery before failing
             discovered_path, count = discover_profile()
@@ -1478,8 +2547,8 @@ def main():
                     print(f"  --profile profiles/{p}", file=sys.stderr)
                 sys.exit(1)
             else:
-                parser.error("--learn requires --profile (no user profile found; run --calibrate first)")
-        first_path, final_path = args.learn
+                parser.error("--learn/--quantitative requires --profile (no user profile found; run --calibrate first)")
+        first_path, final_path = learn_args
         for p in (first_path, final_path):
             if not os.path.isfile(p):
                 print(f"Error: File not found: {p}", file=sys.stderr)
@@ -1487,7 +2556,9 @@ def main():
         if not os.path.isfile(args.profile):
             print(f"Error: Profile not found: {args.profile}", file=sys.stderr)
             sys.exit(1)
-        learn_from_revision(first_path, final_path, args.profile)
+        learn_from_revision(first_path, final_path, args.profile,
+                            notes=args.notes, update_profile=update_profile,
+                            genre=args.genre)
         return
 
     # Calibration mode
@@ -1495,7 +2566,23 @@ def main():
         if not os.path.isdir(args.calibrate):
             print(f"Error: Directory not found: {args.calibrate}", file=sys.stderr)
             sys.exit(1)
-        calibrate_from_samples(args.calibrate, args.output)
+        # If --genre is specified for calibration, --output must point at an
+        # existing profile to merge into. Resolve a sensible default if user
+        # didn't pass --output explicitly.
+        out_path = args.output
+        if args.genre and not out_path:
+            discovered, count = discover_profile()
+            if discovered:
+                out_path = discovered
+                print(f"  --calibrate --genre {args.genre}: writing into "
+                      f"discovered profile {os.path.basename(out_path)}",
+                      file=sys.stderr)
+            else:
+                print("Error: --calibrate --genre requires --output to point at "
+                      "an existing user profile, or exactly one user profile in "
+                      "the profiles/ directory for auto-discovery.", file=sys.stderr)
+                sys.exit(1)
+        calibrate_from_samples(args.calibrate, out_path, genre=args.genre)
         return
 
     # Analysis mode — file is required

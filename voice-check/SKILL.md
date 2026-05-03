@@ -22,9 +22,20 @@ The user never needs to run a voice check to generate fixes. The agent uses the 
 | Command | What it does |
 |---|---|
 | `/voice-check setup` | Create your voice profile from writing samples (auto-runs on first writing task if no profile exists) |
-| `/voice-check learn` | After a revision session: compare first draft to final, update profile |
+| `/voice-check learn` | After a revision session: full learning loop (diff + quantitative update + qualitative CDA sweep) |
 | `/voice-check reflect` | Periodic reflection: review patterns across sessions, propose profile updates |
 | `/voice-check [file]` | Optional: run standalone diagnostic on any document |
+
+**Script flags (direct invocation):**
+
+| Flag | What it does |
+|---|---|
+| `--learn FIRST FINAL` | Full learning loop — diff analysis, quantitative update, qualitative analysis prompt |
+| `--diff FIRST FINAL` | Structural diff only — no profile update; useful for inspecting version pairs |
+| `--quantitative FIRST FINAL` | Quantitative analysis only — prints deltas, no profile update |
+| `--notes "text"` | Add intent note to a --learn run (e.g., "structural pass" or "fine-grained finalization") |
+| `--genre GENRE` | Apply genre-specific thresholds to any command |
+| `--profile PATH` | Specify profile when multiple exist |
 
 ## Paths
 
@@ -65,6 +76,8 @@ Merge order: **base → user → genre**. User thresholds override base. Genre t
 
 3. **Select genre.** Identify which genre the current writing task falls into from the profile's `genres` section. Genre selection is usually obvious from context ("help me with this cover letter" → the user's cover letter genre). If ambiguous, ask. If no matching genre exists, offer to create one (see Genre Creation below) or use base thresholds.
 
+4. **Fact assembly — load specific factual material before writing.** Voice profile alone is not enough. The recurring failure mode in agent drafting is theoretical scaffolding padding generic claims, because the specific facts (scenes, dates, names, quotes, ethnographic details, findings) weren't loaded into context. Before drafting, sketch what each section needs to do, locate the source documents that ground each section's claims, and read those sources INTO context — not summaries, the actual prose with the specific details. Where the user's project has source-material registries (e.g., a `SOURCE_MATERIALS.md` indexing file paths to primary documents), use them to find sources without re-searching. When a needed fact has no available source, ask the user — do not fabricate plausible detail. Then draft from assembled facts, with theory cited doing work on specific cases — not name-dropped to suggest engagement. The pipeline a writing project lives in (e.g., `PIPELINE.md` for a job-search workflow) may specify a "Fact assembly" step with project-specific source registries; follow it. Without fact assembly, agents produce text that sounds plausible but doesn't land for readers — it gestures at engagement without engaging.
+
 ### During drafting
 
 4. **Write in the user's voice.** Use the style notes and qualitative checks as active guidance, not just post-hoc criteria. Match their sentence rhythm, vocabulary register, argumentation style, and relationship with the reader. Avoid everything in the anti-pattern lists.
@@ -85,13 +98,53 @@ Merge order: **base → user → genre**. User thresholds override base. Genre t
 
 9. **Offer the learning loop at session end.** When the user finishes revising a document (the conversation is wrapping up, or they say they're done), ask: "Want me to run the learning loop? I'll compare my first draft to your final version and update the voice profile so I draft closer to your voice next time."
 
-10. **Run the learning loop.** If the user agrees (or during end-of-session maintenance):
-   ```bash
-   python3 ~/.claude/skills/voice-check/writing_check.py --learn FIRST_DRAFT FINAL_DRAFT
-   ```
-   The script auto-discovers the profile. This compares stylometry (and perplexity/embeddings if available) between the two versions, identifies what shifted, and updates the user profile via exponential moving average. The base profile is never modified. Report the key shifts to the user — e.g., "Your revisions shortened sentences and cut front-loaded subjects. Profile updated."
+10. **Run the learning loop — full 4-phase pipeline.** The `--learn` command runs structural diff, quantitative update, paragraph/cohesion metrics, and outputs a qualitative analysis prompt. Always use the writer's `.md` source, NOT a rendered `.html` (HTML markup contaminates the metrics).
 
-   **Important:** Save the agent's first draft to a temp file before beginning the revision conversation. You need both versions for the learning loop.
+   ```bash
+   python3 ~/.claude/skills/voice-check/writing_check.py --learn FIRST_DRAFT.md FINAL_DRAFT.md [--notes "intent"]
+   ```
+
+   The four phases:
+
+   - **Phase 1 — Diff analysis.** Sentence-level alignment classifies each sentence as preserved, light edit, substantial rewrite, deleted, or added. Detects paragraph reordering. Output identifies whether the revision pattern is `STRUCTURAL` (paragraphs moved/added) or `LOCAL` (sentence-level edits dominate).
+   - **Phase 2 — Quantitative update.** Stylometry, perplexity, embeddings updated via EMA. Same as the previous learning loop behavior.
+   - **Phase 3 — Paragraph + cohesion metrics.** Compares paragraph counts, sentence-per-paragraph distribution, topic-sentence weight (first-sentence word counts), landing weight (last-sentence word counts), and sentence-to-sentence lexical chain density (cohesion proxy). Flags low-cohesion adjacent sentence pairs — these are potential connectivity breaks.
+   - **Phase 4 — Qualitative analysis (agent responsibility).** The script prints a structured CDA prompt. The agent must then read both files in full and perform the sweep at clause/sentence, paragraph, and document levels. Map changes to existing qualitative checks; propose additions for gaps. Present proposed additions to the user for approval before updating the profile.
+
+   **Workflow note for structural vs. local revisions.** When the diff pattern is `STRUCTURAL`, weight sentence-level signals lower in the qualitative analysis — they often reflect collateral damage from reorganization, not deliberate voice choices. Fine-grained refinement passes carry the strongest voice signal at the sentence level. The optional `--notes` flag lets the user tag the run's intent ("structural pass," "fine-grained finalization," etc.) so the agent reads the signals in context.
+
+   **Save the agent's first draft to a temp file before beginning the revision conversation.** You need both versions for the learning loop.
+
+   **Standalone tools:**
+   - `--diff FIRST FINAL` — runs only the structural diff (no profile update). Useful for inspecting version pairs before deciding whether to run the full loop.
+   - `--quantitative FIRST FINAL` — runs the full pipeline output WITHOUT updating the profile. Useful for sanity-checking a revision pair, or for runs where you want to see the metrics but the pair isn't representative enough to update the profile (e.g., genre-divergent applications).
+
+11. **VERSION_MANIFEST (optional, recommended for multi-version applications).** When an application goes through many drafts (more than 3-4), maintain a `VERSION_MANIFEST.md` in the application folder mapping each version transition with type and intent:
+
+   ```markdown
+   | From | To | Type | Author | Intent |
+   |------|-----|------|--------|--------|
+   | v3 | v4 | structural | AI | Three-axis framework introduction |
+   | v5 | v6 | fine-grained | June | Voice preservation pass |
+   | v14 | v15 | fine-grained | June | Framework-collapse beat insertion |
+   ```
+
+   The manifest disambiguates valuable signal (intentional voice choices in fine-grained passes) from noise (sentence-level changes that fall out of structural reorganization). When choosing which pairs to run `--learn` on, the manifest tells you which are highest-signal — fine-grained pairs after the architecture has settled.
+
+12. **For multi-version applications: use `--learn-sequence`.** When an application has gone through 5+ versions, don't run `--learn` pair by pair. Use:
+
+   ```bash
+   python3 ~/.claude/skills/voice-check/writing_check.py --learn-sequence v3.md v4.md ... v21.md [--genre G] [--manifest VERSION_MANIFEST.md] [--dry-run]
+   ```
+
+   The script auto-classifies each transition as structural or fine-grained, detects the phase transition where architecture settled, and applies EMA updates only on the fine-grained pairs (capped at 4 per call to avoid over-weighting one application). Use `--dry-run` first to verify the classification before writing to the profile.
+
+   For folder-based discovery:
+   ```bash
+   python3 writing_check.py --learn-sequence --auto-discover FOLDER --pattern "APPLICATION_DRAFT_V*.md" --sort-by name [--genre G]
+   ```
+
+   The classifications are heuristic — verify against your own memory of the revision sessions, and use `--manifest` to override when needed. The auto-classifier errs on the side of "structural" for ambiguous cases (safer to skip than over-weight a structural pair). When the trajectory report flags a pair as structural that you remember as fine-grained refinement, add it to the manifest and re-run.
 
 ---
 
