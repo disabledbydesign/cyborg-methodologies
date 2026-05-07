@@ -31,8 +31,11 @@ The user never needs to run a voice check to generate fixes. The agent uses the 
 | Flag | What it does |
 |---|---|
 | `--learn FIRST FINAL` | Full learning loop — diff analysis, quantitative update, qualitative analysis prompt |
+| `--learn-sequence v1.md ... vN.md` | Multi-version learning loop with auto-classification of structural vs. fine-grained transitions |
 | `--diff FIRST FINAL` | Structural diff only — no profile update; useful for inspecting version pairs |
 | `--quantitative FIRST FINAL` | Quantitative analysis only — prints deltas, no profile update |
+| `--audit-diagnostics` | Read-only report on `diagnostic`-role checks: last-cited dates, citation counts. Auto-triggered when a diagnostic check has been silent for 5+ runs. |
+| `--log-cited-checks ID1,ID2,...` | After Phase 4 CDA sweep, log which check IDs fired during revision. Appends to most recent citation log entry. Without this, citation log is mostly heartbeat. |
 | `--notes "text"` | Add intent note to a --learn run (e.g., "structural pass" or "fine-grained finalization") |
 | `--genre GENRE` | Apply genre-specific thresholds to any command |
 | `--profile PATH` | Specify profile when multiple exist |
@@ -58,6 +61,46 @@ The profile system has three layers that merge at load time:
 
 Merge order: **base → user → genre**. User thresholds override base. Genre thresholds override the merged result. User patterns extend base patterns (concatenated). User qualitative checks with the same ID as a base check replace it; new checks are appended.
 
+### Role schema (qualitative checks)
+
+Each qualitative check carries a `role` field that determines who reads it and when. The schema:
+
+| Role | What it is | Who reads it | When |
+|---|---|---|---|
+| `pre_draft` | Principle that shapes what gets written | Drafting agent, in flight | Before and during drafting |
+| `linter` | Pattern/threshold rule fired automatically by the script | The script | After drafting (auto) |
+| `cda_sweep` | Prompt for interpreting revisions | CDA agent during `--learn` | Learning loop qualitative phase |
+| `diagnostic` | Rare situational flag for a tendency | Mixed | Surfaces only when triggered |
+
+The role schema exists because earlier versions of this profile had ~44 mixed-role checks that all looked the same to a reader. Agents drafting were burning ~29K tokens to extract the ~7-10 principles that actually shape what gets written. Filtering to `pre_draft` drops the in-flight read by ~70% without losing any load-bearing guidance.
+
+### Progressive disclosure for genres
+
+Genres are the second axis of progressive disclosure. The profile may contain 10+ genre blocks, but **agents draft in one genre at a time**. Reading every genre's block when only one applies is the same kind of waste as reading every role's checks. Loading all genres typically costs ~10K tokens; loading just the matched genre typically costs under 1K.
+
+The protocol for agents (see step 3 of agent integration): identify the genre BEFORE reading the rest of the profile. Then read only the matched genre's block (`description`, `threshold_overrides`, `genre_moves`, `qualitative`). Skip other genres entirely. If the genre is ambiguous, ask the user before reading rather than reading all of them. The chunking choice (which genre to load) is itself an analytical commitment; treat it as a lens, not infrastructure.
+
+### Theoretical anchors
+
+A profile may include a `theoretical_anchors` field listing the scholarly frameworks the qualitative checks operationalize. This exists because individual check instructions can't fully convey the framework they instantiate — and fresh-context agents have no session memory of the calibration sessions where the frameworks were discussed. The anchors include `for_fresh_agents` briefings designed to activate training data on each named work. See agent integration protocol step 2.5 for use.
+
+---
+
+## Drafting principle: relational tracing, not similarity clustering
+
+When drafting connections between ideas, sections, cases, or pieces of evidence — especially in multi-section documents (grants, papers, statements, books) — the AI's default pattern-matching pulls toward similarity. Twin-finding. What's-like-what's-here. Lateral feature-matching: "section A is X, and section B is also-X-but-different."
+
+Route against this. The move that makes a multi-project document feel integrated rather than four separate projects in a trenchcoat is **configurational**, not thematic: same operation traceable across registers, not shared surface features.
+
+**What to do instead.** When you reach for a connector — between two sections, two cases, two scholars, two scenes — ask what's *connected to* / *taking up* / *talking to* / *picking up from* the artifact, not what's like it. Trace the relational field around the artifact rather than its twins.
+
+- Lateral (default, wrong): "Section A foregrounds X. Section B also foregrounds X, in a different domain."
+- Configurational (right): "The claim from Section A is being TAKEN UP in Section B, at a different site, doing different work. What Section A opened, Section B is picking up."
+
+Generation test: if the connector sentence would still hold after swapping the second case for any other case sharing the same surface theme, it's lateral. If it depends on this specific second case picking up what this specific first case opened, it's configurational.
+
+For depth on what this routes against, see the cyborg-methodologies memos: `cgt-skill/memos/010_gravities_to_route_against.md` (similarity pattern-matching → dialogic relation), `016_openings_and_takings_up.md` (the openings/takings-up move), `022_routing_through_constructivist_subdistributions.md` (lexical priming as sub-distribution selection — using "takes up" / "opens" / "picks up from" in prompts and prose activates the right register).
+
 ---
 
 ## Agent integration protocol
@@ -68,19 +111,40 @@ Merge order: **base → user → genre**. User thresholds override base. Genre t
 
 1. **Check for voice profile.** Look in `~/.claude/skills/voice-check/profiles/` for non-base JSON profiles. If exactly one exists, use it. If multiple exist, ask which one. If none exists, offer to run setup (see Setup section). If only `base.json` exists, you can still draft using universal norms — just note the writing won't be personalized.
 
-2. **Read the profile.** Load the profile JSON (the script auto-merges base + user layers). Read these sections carefully before writing anything:
-   - `stylometry.style_notes` — plain-language summary of the writer's voice fingerprint
-   - `qualitative` — checklist items describe what makes this writer's voice distinctive and what to protect. Some are diagnostic (notice this pattern), some are prescriptive (do this).
-   - `genres.[genre].description` — if a genre matches, read its description and genre-specific checks
-   - `patterns` — anti-pattern lists tell you what words are contamination signals in this voice
+2. **Identify genre BEFORE reading the rest of the profile.** Genre selection is usually obvious from context ("help me with this cover letter" → the user's cover letter genre). If ambiguous, ask the user — don't read every genre's block to figure it out. If no matching genre exists, offer to create one (see Genre Creation below) or use base thresholds. Identifying genre first is what enables progressive disclosure on the read in step 3.
 
-3. **Select genre.** Identify which genre the current writing task falls into from the profile's `genres` section. Genre selection is usually obvious from context ("help me with this cover letter" → the user's cover letter genre). If ambiguous, ask. If no matching genre exists, offer to create one (see Genre Creation below) or use base thresholds.
+3. **Read the profile, filtered by role AND genre.** Load the profile JSON (the script auto-merges base + user layers). Apply two filters:
+
+   **Role filter on `qualitative[]`** — each check carries a `role` field; filter to what's load-bearing for the work in front of you:
+   - **`role: "pre_draft"`** — principles that shape what gets written. **Read these in full before drafting.** This is the in-flight reference set (~30 checks; ~10K tokens).
+   - **`role: "linter"`** — pattern/threshold rules fired automatically by the script. Don't read manually.
+   - **`role: "cda_sweep"`** — prompts for the learning loop's qualitative phase. Read only when running `--learn`.
+   - **`role: "diagnostic"`** — rare situational flags. Read when triggered.
+
+   **Genre filter on `genres`** — read ONLY the genre block matching what you identified in step 2. Skip every other genre's block. The full `genres` field across 10+ genres can total ~10K tokens; the matched genre is typically <1K. Loading other genres is the same kind of waste as loading non-pre_draft checks — fix it the same way.
+
+   For the matched genre, read all of: `description`, `threshold_overrides`, `genre_moves`, and `qualitative` (if present, even cda_sweep/linter/diagnostic checks specific to this genre — they're scoped narrowly enough to be relevant when drafting in this genre).
+
+   Drop into a non-pre_draft check's full instruction only when something specific in the draft warrants the deepening.
+
+   Also read:
+   - `stylometry.style_notes` — plain-language summary of the writer's voice fingerprint
+   - `theoretical_anchors` (if present) — frameworks the checks draw from. See step 3.5.
+   - `patterns` — anti-pattern lists tell you what words are contamination signals (the script catches these post-draft, but recognizing them while drafting prevents the contamination)
+
+3.5. **Activate theoretical anchors.** If the profile has a `theoretical_anchors` field, it lists scholarly frameworks the qualitative checks operationalize (e.g., Martin & White's Appraisal Theory, Williams's *Style: Lessons in Clarity and Grace*, Halliday's Systemic Functional Linguistics). Each anchor includes a `for_fresh_agents` field with a short briefing on the framework. **Before drafting, briefly review your training data on each named anchor.** The qualitative checks are operationalizations of these frameworks — activating the frameworks gives you context the individual check instructions cannot fully convey.
+
+   **Why this matters (motivation, not enforcement):** activating the frameworks before drafting produces a better first draft. Better first draft = fewer rounds of revision the user has to do = more of their time available for everything else. The most efficient way to draft is to do the best possible job on the first attempt, not to draft fast and patch later. Every Williams violation caught at draft time is one less the user has to fix. Every contamination pattern named by a framework you've activated is one you can recognize and avoid in flight, not just have flagged after the fact. Treat anchor activation as the small upfront investment that earns back many rounds of editing — for you, for the user, for the work.
+
+   This is especially important for fresh-context agents with no session memory of prior calibration sessions: you literally don't know the framework grounding without activating it, and the individual check instructions can't carry the full theoretical context.
 
 4. **Fact assembly — load specific factual material before writing.** Voice profile alone is not enough. The recurring failure mode in agent drafting is theoretical scaffolding padding generic claims, because the specific facts (scenes, dates, names, quotes, ethnographic details, findings) weren't loaded into context. Before drafting, sketch what each section needs to do, locate the source documents that ground each section's claims, and read those sources INTO context — not summaries, the actual prose with the specific details. Where the user's project has source-material registries (e.g., a `SOURCE_MATERIALS.md` indexing file paths to primary documents), use them to find sources without re-searching. When a needed fact has no available source, ask the user — do not fabricate plausible detail. Then draft from assembled facts, with theory cited doing work on specific cases — not name-dropped to suggest engagement. The pipeline a writing project lives in (e.g., `PIPELINE.md` for a job-search workflow) may specify a "Fact assembly" step with project-specific source registries; follow it. Without fact assembly, agents produce text that sounds plausible but doesn't land for readers — it gestures at engagement without engaging.
 
+   **Pulling from prior similar work.** When adapting from a prior similar document or project, **pull from the most recent submitted/final version**, not an earlier draft. Look for, in order: (1) `*_final.md` or similarly-named final markdown; (2) the submitted PDF or HTML artifact (these reflect the final state — extract their prose into a working markdown); (3) the highest-numbered `vN.md` if no explicit final exists. **Do not start from `draft_v1.md` or `v1.md` if more recent versions exist.** Failure mode this prevents: an agent adapts the wrong prior version (an old draft instead of the submitted final), and the new draft is already a partial regression before any work begins. The agent that submits a final document should also write a clean `*_final.md` to the project folder so future agents pulling from this work have an unambiguous source to use.
+
 ### During drafting
 
-4. **Write in the user's voice.** Use the style notes and qualitative checks as active guidance, not just post-hoc criteria. Match their sentence rhythm, vocabulary register, argumentation style, and relationship with the reader. Avoid everything in the anti-pattern lists.
+4. **Write in the user's voice.** Use the style notes and qualitative checks as active guidance, not just post-hoc criteria. Match their sentence rhythm, vocabulary register, argumentation style, and relationship with the reader. Avoid everything in the anti-pattern lists. When drafting connections between sections, cases, or scholars, use **relational tracing** (what TAKES UP what), not similarity clustering (what's LIKE what) — see "Drafting principle: relational tracing" above.
 
 5. **Self-check after drafting.** Run the quantitative analysis on your own output:
    ```bash
@@ -93,6 +157,10 @@ Merge order: **base → user → genre**. User thresholds override base. Genre t
 7. **Honestly assess quality before presenting.** Before showing the draft to the user, assess its quality per section. Name what's strong and what's weak. For example: "The opening paragraph is strong — identity-first, specific. The research section has several front-loaded sentences that put new concepts before the reader is oriented. The fit section announces alignment rather than demonstrating it through intellectual engagement." Do not default to "this looks good." AI-generated text defaults to positive self-assessment because the training distribution rewards reassurance. Resist that pull — the user needs accurate assessment to make revision decisions.
 
 8. **Surface structural/qualitative findings as suggestions.** If the check flags structural issues (long sentences, em-dash density, front-loaded subjects) or if you notice qualitative concerns from the checklist, mention them as suggestions the user can accept or reject. These are judgment calls, not automatic fixes. Frame as: "I noticed X — want me to adjust, or is that intentional?"
+
+### Pre-submission QC pass
+
+8.5. **Before submission, re-review every `pre_draft` check against the final draft.** This is the moment to catch principles that drifted during revision — checks that fired correctly during initial drafting may have been compromised by later edits, especially structural reorganization. A few checks are particularly prone to this kind of late drift (e.g., `cross_document_awareness` — does the final draft re-explain anything covered in the cover letter or research statement? Did a paragraph the user added accidentally duplicate a frame from another document in the application?). Walk through each `pre_draft` check, ask whether the final text honors it. Flag anything ambiguous to the user before they submit. This step is light — minutes, not hours — but it catches the failures that are most expensive to fix after submission.
 
 ### After revision
 
@@ -109,7 +177,15 @@ Merge order: **base → user → genre**. User thresholds override base. Genre t
    - **Phase 1 — Diff analysis.** Sentence-level alignment classifies each sentence as preserved, light edit, substantial rewrite, deleted, or added. Detects paragraph reordering. Output identifies whether the revision pattern is `STRUCTURAL` (paragraphs moved/added) or `LOCAL` (sentence-level edits dominate).
    - **Phase 2 — Quantitative update.** Stylometry, perplexity, embeddings updated via EMA. Same as the previous learning loop behavior.
    - **Phase 3 — Paragraph + cohesion metrics.** Compares paragraph counts, sentence-per-paragraph distribution, topic-sentence weight (first-sentence word counts), landing weight (last-sentence word counts), and sentence-to-sentence lexical chain density (cohesion proxy). Flags low-cohesion adjacent sentence pairs — these are potential connectivity breaks.
-   - **Phase 4 — Qualitative analysis (agent responsibility).** The script prints a structured CDA prompt. The agent must then read both files in full and perform the sweep at clause/sentence, paragraph, and document levels. Map changes to existing qualitative checks; propose additions for gaps. Present proposed additions to the user for approval before updating the profile.
+   - **Phase 4 — Qualitative analysis (agent responsibility).** The script prints a structured CDA prompt. The agent must then read both files in full and perform the sweep at clause/sentence, paragraph, and document levels. **Editorial discipline applies: the profile should sharpen with each loop, not grow.** The Phase 4 prompt asks for the *smallest set of profile changes* — additions, deletions, merges, or rephrasings — that would have caught the deliberate revision moves. Treat addition as the option of last resort, after rephrase and merge are ruled out. New additions must specify role at insertion; if `pre_draft`, they must name what existing pre_draft check they replace (the in-flight set is capped — additions force tradeoffs). Present proposed changes to the user for approval before updating the profile.
+
+     **For accepted additions and significant rephrasings, append an entry to `~/.claude/skills/voice-check/PROFILE_CHANGE_LOG.md`** with: source diff snippet (quoted, not summarized), rationale, role, and a question for the next audit. Merges and cuts don't require log entries (they reorganize existing rationale rather than create new). The change log handles rationale drift; the citation log (auto-maintained) handles firing-frequency drift. Together they cover both kinds of system entropy without the user needing to remember to audit.
+
+   - **Citation tracking (automatic + agent-supplemented).** Every `--learn` and `--learn-sequence` run scans its analysis output for check IDs and appends to `~/.claude/skills/voice-check/citation_log.json`. The script's text scan is narrow — it sees what was printed during the run, not the agent's post-script CDA analysis. **After your Phase 4 sweep, log the check IDs you actually cited:**
+     ```bash
+     python3 ~/.claude/skills/voice-check/writing_check.py --log-cited-checks transitivity,no_announcement_fragments,bookend_opening_frame
+     ```
+     This appends the IDs to the most recent run's entry. Without this step, the citation log is mostly a heartbeat and DIAGNOSTIC REVIEW auto-trigger has no real signal. **Always run `--log-cited-checks` after Phase 4** if you identified any check IDs as firing during the revision. When a `diagnostic`-role check has been silent for 5+ runs, the next learn report surfaces a "DIAGNOSTIC REVIEW DUE" prompt naming the silent checks. Run `--audit-diagnostics` to see the full diagnostic-status report and decide whether to keep, demote, or cut.
 
    **Workflow note for structural vs. local revisions.** When the diff pattern is `STRUCTURAL`, weight sentence-level signals lower in the qualitative analysis — they often reflect collateral damage from reorganization, not deliberate voice choices. Fine-grained refinement passes carry the strongest voice signal at the sentence level. The optional `--notes` flag lets the user tag the run's intent ("structural pass," "fine-grained finalization," etc.) so the agent reads the signals in context.
 
@@ -125,8 +201,8 @@ Merge order: **base → user → genre**. User thresholds override base. Genre t
    | From | To | Type | Author | Intent |
    |------|-----|------|--------|--------|
    | v3 | v4 | structural | AI | Three-axis framework introduction |
-   | v5 | v6 | fine-grained | June | Voice preservation pass |
-   | v14 | v15 | fine-grained | June | Framework-collapse beat insertion |
+   | v5 | v6 | fine-grained | user | Voice preservation pass |
+   | v14 | v15 | fine-grained | user | Framework-collapse beat insertion |
    ```
 
    The manifest disambiguates valuable signal (intentional voice choices in fine-grained passes) from noise (sentence-level changes that fall out of structural reorganization). When choosing which pairs to run `--learn` on, the manifest tells you which are highest-signal — fine-grained pairs after the architecture has settled.
@@ -315,6 +391,59 @@ After sessions with significant revision friction, or periodically after several
 ### Key principle
 
 The agent surfaces patterns and proposes. The user makes judgment calls about what gets changed. Agent presents findings, then asks — doesn't conclude.
+
+---
+
+## Revision mode
+
+Revision is a distinct mode of work from drafting-from-scratch. The agent enters revision mode when the user is editing an existing draft — pasting passages with directed changes, asking for fine edits, working line-by-line through a document. Revision-mode protocol applies in addition to the drafting protocol, not instead of it.
+
+### Recognize the mode
+
+Signals: user pastes existing prose and asks for edits; user references "the V3" or "the prior version"; user is iterating on specific sentences rather than commissioning new sections; user's feedback is granular ("this sentence isn't landing") rather than structural.
+
+### Show before apply
+
+Default to **propose change → wait for confirmation → apply.** Not auto-apply. When you see the change you want to make, write the proposed replacement and stop. Let the user confirm. Auto-applying overwrites work the user may want to keep, and short-circuits the iteration the revision is for.
+
+Exception: trivial mechanical fixes (typos, contamination words from the patterns list, an obvious grammar error in a passage the user has already approved) can be applied without checking. Anything that changes meaning, reorders, or rewrites a sentence the user composed gets shown first.
+
+### Mine prior versions before retranslating
+
+A user's profile may have included a `mine_prior_versions` qualitative check in earlier versions. The principle is encoded here as a workflow rule, not a text-pattern check. Enforcing it requires a workflow step.
+
+When revising a passage:
+1. **Locate prior versions.** Look in the project for V1/V2/V3, REVISED files, prior session drafts. Ask the user if you can't find them.
+2. **Check whether the passage you're about to rewrite was already worked.** If a prior version had a sharper sentence than what you're about to draft, paste it forward rather than retranslating.
+3. **Translation introduces errors and loses tested phrasings.** Reuse what worked.
+
+### Verify source claims; flag uncertainty rather than fabricating
+
+When revising prose that makes specific factual claims (a date, a quote, an event detail, an ethnographic specific), do not invent supporting detail to make the prose flow. If the source isn't in context, flag the uncertainty: "I don't have a source for the [specific detail]. Want me to leave it general, or can you confirm?" Plausible-sounding fabricated detail is the failure mode here — it reads as authoritative and is wrong.
+
+### Resist optimism creep when source material is despair-coded
+
+The base contamination patterns catch corporate optimism ("transformative," "groundbreaking"). They do not catch the subtler hope-creep that surfaces when an agent is reporting on dark ethnographic conditions or political crisis. The pattern: the source material is grief, foreclosure, or despair; the agent's revision restores forward motion or hope without the prose having earned it.
+
+When the source register is despair-coded, flag any sentence in the revision that introduces forward motion, possibility, or repair that wasn't present in the source. Surface as a question: "I added 'but the work continues' here — the source didn't have that. Keep it or cut?"
+
+This is also encoded as a `linter`-role qualitative check (`resist_optimism_creep`) that fires on any draft, not just during revision.
+
+### Affect before reasons when affect is the analytical foreground
+
+When affect is the analytical foreground (the chapter is about a felt condition; the section's analytical claim depends on the reader registering the affect), lead with the affect statement. The list of structural reasons follows. Reversing this — leading with the structural reasons and arriving at the affect — turns the affect into a consequence to be derived rather than a condition to be inhabited.
+
+Example: "People felt hopeless." should come BEFORE the list of reasons people had to feel hopeless, not after.
+
+This is also encoded as a `pre_draft`-role qualitative check (`affect_before_reasons`) that fires on any draft.
+
+### Configurational orientation sentences in multi-project documents
+
+Section transitions in multi-section documents (grants, papers, books) can do orientation through configurational connection rather than meta-discourse. The default-bad move is meta-discourse: "The book's second register is X." The agent reaches for this because it's the statistical center of academic transition writing.
+
+The configurational alternative names what the new section TAKES UP from the prior section, at a different site, doing different work. This sounds like the document moving forward through its own argument, not like a table of contents being narrated.
+
+See "Drafting principle: relational tracing" for the underlying move; this is the section-transition application of it.
 
 ---
 

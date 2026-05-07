@@ -22,6 +22,7 @@ import sys
 import json
 import argparse
 import os
+from datetime import datetime
 
 # Ensure script's directory is on sys.path so sibling modules (stylometry,
 # perplexity, embeddings, diff_analysis) import reliably regardless of cwd
@@ -132,6 +133,32 @@ THRESH_PADDING_MAX = 0
 THRESH_PRODUCT_MAX = 0
 THRESH_JARGON_MAX = 0
 THRESH_WORDCOUNT_OVER = 1.10  # 110% of target
+
+# How many consecutive learn runs a diagnostic check can be absent from cited
+# checks before surfacing in the DIAGNOSTIC REVIEW DUE block.
+DIAGNOSTIC_SILENCE_THRESHOLD = 5
+
+# Paths for persistent learning-loop tracking files.
+CITATION_LOG_PATH = os.path.join(_SCRIPT_DIR, "citation_log.json")
+PROFILE_CHANGE_LOG_PATH = os.path.join(_SCRIPT_DIR, "PROFILE_CHANGE_LOG.md")
+
+# ---------------------------------------------------------------------------
+# Phase 4 qualitative prompt — shared by --learn and --learn-sequence
+# ---------------------------------------------------------------------------
+
+PHASE_4_PROFILE_ACTIONS = """
+  PROFILE ACTIONS
+  □ **Editorial discipline: the profile should sharpen with each loop, not grow. Treat addition as the option of last resort, after rephrase and merge are ruled out.**
+  □ Map each major change type to existing qualitative checks. Which checks predicted the change? (signals they're working.)
+  □ What is the smallest set of profile changes — additions, deletions, merges, or rephrasings — that would have caught the deliberate revision moves? Consider each lens:
+      • REPHRASE: did an existing check fire weakly because its instruction is imprecise? Sharpen the language.
+      • MERGE: did two or more checks point at the same concern from different angles? Collapse them, absorbing distinctive language.
+      • ROLE-REASSIGN or CUT: was a check tagged `pre_draft` that didn't actually shape this revision? Demote to `diagnostic`, or cut.
+      • ADD: is there a genuinely new pattern not covered? Specify role at insertion (pre_draft / linter / cda_sweep / diagnostic). If `pre_draft`, name what existing pre_draft check it replaces — the in-flight set is capped, additions force tradeoffs.
+      • CUT (silence): are there checks that haven't fired across this or the last several revisions? Flag for next audit.
+  □ For accepted additions and significant rephrasings, append an entry to `~/.claude/skills/voice-check/PROFILE_CHANGE_LOG.md`: source diff snippet (quoted, not summarized) + rationale + role + a question for the next audit. Merges and cuts don't require log entries (they reorganize existing rationale rather than create new). This preserves the *why* against rationale drift, separately from the citation log's tracking of *whether the check is still firing*.
+  □ Present proposed changes to the user for approval before updating.
+"""
 
 
 # ---------------------------------------------------------------------------
@@ -1469,6 +1496,276 @@ def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Citation tracking and DIAGNOSTIC REVIEW auto-trigger
+# ---------------------------------------------------------------------------
+
+def _scan_text_for_check_ids(text: str, profile: dict) -> list:
+    """Return sorted list of qualitative check IDs that appear in `text`
+    with word-boundary match. Uses re.escape on each ID for safety."""
+    ids = [c.get("id", "") for c in profile.get("qualitative", []) if c.get("id")]
+    found = set()
+    for cid in ids:
+        if not cid:
+            continue
+        if re.search(r"\b" + re.escape(cid) + r"\b", text):
+            found.add(cid)
+    return sorted(found)
+
+
+def _load_citation_log() -> dict:
+    """Load citation_log.json, creating an empty structure if absent or unreadable."""
+    if not os.path.exists(CITATION_LOG_PATH):
+        return {"runs": []}
+    try:
+        with open(CITATION_LOG_PATH, "r") as f:
+            data = json.load(f)
+        if not isinstance(data, dict) or "runs" not in data:
+            return {"runs": []}
+        return data
+    except Exception:
+        return {"runs": []}
+
+
+def _append_citation_log(command: str, files: list, cited_check_ids: list):
+    """Append a new run entry to citation_log.json."""
+    log = _load_citation_log()
+    log.setdefault("runs", []).append({
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "command": command,
+        "files": list(files),
+        "cited_check_ids": list(cited_check_ids),
+    })
+    try:
+        with open(CITATION_LOG_PATH, "w") as f:
+            json.dump(log, f, indent=2)
+    except Exception as e:
+        print(f"  (citation log write failed: {e})", file=sys.stderr)
+
+
+def _silent_diagnostics(profile: dict, log: dict, threshold: int = DIAGNOSTIC_SILENCE_THRESHOLD):
+    """Return list of (id, last_cited_iso_or_None) for diagnostic-role checks
+    that have NOT been cited in the last `threshold` runs.
+
+    Returns [] if there are fewer than `threshold` runs total (need history first).
+    """
+    runs = log.get("runs", [])
+    if len(runs) < threshold:
+        return []
+    diagnostic_ids = [c["id"] for c in profile.get("qualitative", []) if c.get("role") == "diagnostic"]
+    if not diagnostic_ids:
+        return []
+    recent = runs[-threshold:]
+    silent = []
+    for cid in diagnostic_ids:
+        cited_recently = any(cid in r.get("cited_check_ids", []) for r in recent)
+        if cited_recently:
+            continue
+        # find last citation (anywhere in log) for reporting
+        last = None
+        for r in reversed(runs):
+            if cid in r.get("cited_check_ids", []):
+                last = r.get("timestamp")
+                break
+        silent.append((cid, last))
+    return silent
+
+
+def emit_cited_checks_and_update_log(scanned_text: str, profile: dict,
+                                     command: str, files: list):
+    """Called at end of --learn / --learn-sequence reports.
+
+    1. Scans accumulated analysis text for check ID citations.
+    2. Prints CITED CHECKS THIS REVISION banner.
+    3. Appends entry to citation_log.json.
+    4. If any diagnostic check has been silent for DIAGNOSTIC_SILENCE_THRESHOLD
+       runs, prints DIAGNOSTIC REVIEW DUE block.
+    """
+    sep = "═" * 51
+    cited = _scan_text_for_check_ids(scanned_text, profile)
+
+    print(f"\n{sep}")
+    print("  CITED CHECKS THIS REVISION")
+    print(sep)
+    if cited:
+        # break into lines of ~72 chars for readability
+        line = "    "
+        out_lines = []
+        for cid in cited:
+            chunk = cid + ", "
+            if len(line) + len(chunk) > 76 and line.strip():
+                out_lines.append(line.rstrip(", "))
+                line = "    " + chunk
+            else:
+                line += chunk
+        if line.strip():
+            out_lines.append(line.rstrip(", "))
+        print("\n".join(out_lines))
+    else:
+        print("    (none)")
+
+    # Persist
+    _append_citation_log(command, files, cited)
+
+    # DIAGNOSTIC REVIEW auto-trigger
+    log = _load_citation_log()
+    silent = _silent_diagnostics(profile, log)
+    if silent:
+        print(f"\n{sep}")
+        print("  DIAGNOSTIC REVIEW DUE")
+        print(sep)
+        print(f"  The following diagnostic checks have not been cited in the "
+              f"last {DIAGNOSTIC_SILENCE_THRESHOLD} learn runs:")
+        for cid, last in silent:
+            last_str = f"last cited: {last[:10]}" if last else "never cited"
+            print(f"    - {cid} ({last_str})")
+        print("  Run `python3 writing_check.py --audit-diagnostics` to review "
+              "and decide whether to keep, demote (cut), or rephrase to fire "
+              "more reliably.")
+
+
+def log_cited_checks_postanalysis(cited_ids: list, profile_path: str = None):
+    """Append cited check IDs to the most recent run entry in citation_log.json.
+
+    Called by agents after their Phase 4 CDA sweep, to record which check
+    IDs fired during the revision they just analyzed. Closes the gap left
+    by --learn's text-scan, which only sees what the script printed (not
+    the agent's post-script analysis).
+    """
+    if not os.path.exists(CITATION_LOG_PATH):
+        print(f"Error: No citation log at {CITATION_LOG_PATH}. "
+              f"Run --learn or --learn-sequence first.", file=sys.stderr)
+        sys.exit(1)
+    log = _load_citation_log()
+    runs = log.get("runs", [])
+    if not runs:
+        print(f"Error: Citation log is empty. Run --learn first.", file=sys.stderr)
+        sys.exit(1)
+
+    # Validate IDs against the loaded profile
+    if profile_path or True:
+        try:
+            if not profile_path:
+                profile_path = discover_profile()
+            profile = load_profile(profile_path)
+            valid_ids = {c["id"] for c in profile.get("qualitative", []) if c.get("id")}
+            unknown = [cid for cid in cited_ids if cid not in valid_ids]
+            if unknown:
+                print(f"  Warning: unknown check IDs (not in profile): {unknown}",
+                      file=sys.stderr)
+        except Exception:
+            pass  # Validation is best-effort
+
+    # Merge into most recent run's cited_check_ids (dedup, sort)
+    last = runs[-1]
+    existing = set(last.get("cited_check_ids", []))
+    new_total = sorted(existing | set(cited_ids))
+    last["cited_check_ids"] = new_total
+
+    with open(CITATION_LOG_PATH, "w") as f:
+        json.dump(log, f, indent=2)
+
+    sep = "═" * 51
+    print(f"\n{sep}")
+    print("  CITED CHECKS LOGGED (post-analysis)")
+    print(sep)
+    print(f"  Run timestamp: {last.get('timestamp', '?')}")
+    print(f"  Run command:   {last.get('command', '?')}")
+    print(f"  Files:         {last.get('files', [])}")
+    print(f"  Cited (total): {len(new_total)} check IDs")
+    if new_total:
+        print(f"    {', '.join(new_total)}")
+
+
+def run_audit_diagnostics(profile_path: str = None):
+    """Read-only report on diagnostic-role checks: last cited dates and
+    counts over recent history. Doesn't modify anything; surfaces data for
+    the user to act on."""
+    sep = "═" * 51
+
+    # Load profile (auto-discover if not specified)
+    if not profile_path:
+        try:
+            profile_path = discover_profile()
+        except SystemExit:
+            raise
+    profile = load_profile(profile_path)
+    profile_name = os.path.basename(profile_path)
+    profile_version = profile.get("profile", {}).get("version", "?")
+
+    # Load citation log
+    if not os.path.exists(CITATION_LOG_PATH):
+        print(f"\n{sep}")
+        print("  DIAGNOSTIC CHECK STATUS REPORT")
+        print(sep)
+        print(f"\n  No citation log yet at {CITATION_LOG_PATH}.")
+        print("  Run --learn or --learn-sequence first to generate citation history.")
+        return
+    log = _load_citation_log()
+    runs = log.get("runs", [])
+
+    diagnostic_checks = [c for c in profile.get("qualitative", []) if c.get("role") == "diagnostic"]
+
+    print(f"\n{sep}")
+    print("  DIAGNOSTIC CHECK STATUS REPORT")
+    print(sep)
+    print(f"  Profile: {profile_name} (v{profile_version})")
+    print(f"  Total runs in citation log: {len(runs)}")
+    print(f"  Diagnostic checks: {len(diagnostic_checks)}")
+    print()
+    print("  CHECK STATUS")
+
+    # Recent window for counts
+    recent_window = 10
+    recent = runs[-recent_window:] if runs else []
+
+    silent_in_threshold = []
+    for c in diagnostic_checks:
+        cid = c["id"]
+        # Last citation timestamp (any time)
+        last_iso = None
+        for r in reversed(runs):
+            if cid in r.get("cited_check_ids", []):
+                last_iso = r.get("timestamp")
+                break
+        # Count over last 10 runs
+        count_recent = sum(1 for r in recent if cid in r.get("cited_check_ids", []))
+        # Status
+        if last_iso is None:
+            status = "SILENT (never cited)"
+            silent_in_threshold.append(cid)
+        elif count_recent == 0:
+            # cited at some point but not in the last 10 runs
+            status = "SILENT (consider review)"
+            silent_in_threshold.append(cid)
+        else:
+            status = "FIRING (recent)"
+
+        print()
+        print(f"  {cid}")
+        if last_iso:
+            # Compute "N runs ago" — find index from end
+            runs_ago = None
+            for i, r in enumerate(reversed(runs)):
+                if cid in r.get("cited_check_ids", []):
+                    runs_ago = i
+                    break
+            ago_str = f" ({runs_ago} run{'s' if runs_ago != 1 else ''} ago)" if runs_ago is not None else ""
+            print(f"    Last cited: {last_iso[:10]}{ago_str}")
+        else:
+            print(f"    Last cited: never")
+        print(f"    Citations in last {recent_window} runs: {count_recent}")
+        print(f"    Status: {status}")
+
+    print()
+    print("  RECOMMENDATIONS")
+    print("    SILENT diagnostic checks may be:")
+    print("    - working as insurance (fire only when triggered, by design)")
+    print("    - poorly worded (failing to fire when they should)")
+    print("    - dead (no longer relevant)")
+    print("    Decide for each: keep, rephrase, or cut.")
+
+
+# ---------------------------------------------------------------------------
 # Learning loop: update profile from revision pair
 # ---------------------------------------------------------------------------
 
@@ -1537,10 +1834,12 @@ def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_pa
 
     # --- Phase 1: Diff analysis ---
     diff_result = None
+    diff_report_str = ""
     try:
         from diff_analysis import compute_diff, format_diff_report
         diff_result = compute_diff(first_text, final_text)
-        print(format_diff_report(diff_result))
+        diff_report_str = format_diff_report(diff_result)
+        print(diff_report_str)
     except ImportError:
         print("\n  (diff_analysis module not available \u2014 skipping structural diff)")
 
@@ -1802,12 +2101,16 @@ def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_pa
     of the same pattern)?
 
   PROFILE ACTIONS
-  □ Map each major change type to existing qualitative checks.
-    Which checks predicted the change? (signals they're working.)
-    Which changes had no corresponding check? (gaps in the profile.)
-  □ For each gap: draft a proposed qualitative check addition, framed as
-    collaborative motivation (why this matters), not compliance enforcement.
-  □ Present proposed additions to the user for approval before updating.
+  □ **Editorial discipline: the profile should sharpen with each loop, not grow. Treat addition as the option of last resort, after rephrase and merge are ruled out.**
+  □ Map each major change type to existing qualitative checks. Which checks predicted the change? (signals they're working.)
+  □ What is the smallest set of profile changes — additions, deletions, merges, or rephrasings — that would have caught the deliberate revision moves? Consider each lens:
+      • REPHRASE: did an existing check fire weakly because its instruction is imprecise? Sharpen the language.
+      • MERGE: did two or more checks point at the same concern from different angles? Collapse them, absorbing distinctive language.
+      • ROLE-REASSIGN or CUT: was a check tagged `pre_draft` that didn't actually shape this revision? Demote to `diagnostic`, or cut.
+      • ADD: is there a genuinely new pattern not covered? Specify role at insertion (pre_draft / linter / cda_sweep / diagnostic). If `pre_draft`, name what existing pre_draft check it replaces — the in-flight set is capped, additions force tradeoffs.
+      • CUT (silence): are there checks that haven't fired across this or the last several revisions? Flag for next audit.
+  □ For accepted additions and significant rephrasings, append an entry to `~/.claude/skills/voice-check/PROFILE_CHANGE_LOG.md`: source diff snippet (quoted, not summarized) + rationale + role + a question for the next audit. Merges and cuts don't require log entries (they reorganize existing rationale rather than create new). This preserves the *why* against rationale drift, separately from the citation log's tracking of *whether the check is still firing*.
+  □ Present proposed changes to the user for approval before updating.
 
   WORKFLOW NOTE
   □ If this revision was a structural pass (see diff pattern above), weight
@@ -1816,6 +2119,19 @@ def learn_from_revision(first_draft_path: str, final_draft_path: str, profile_pa
     fine-grained refinement passes carry the strongest voice signal at the
     sentence level.
 """)
+
+    # --- Citation tracking + DIAGNOSTIC REVIEW auto-trigger ---
+    # Scan the diff report (which surfaces actual revision text) plus the
+    # user's notes for any check ID citations. Append to citation_log.json
+    # and surface DIAGNOSTIC REVIEW DUE if any diagnostic check has been
+    # silent for DIAGNOSTIC_SILENCE_THRESHOLD runs.
+    scan_text = (diff_report_str or "") + " " + (notes or "")
+    emit_cited_checks_and_update_log(
+        scanned_text=scan_text,
+        profile=profile,
+        command="--learn",
+        files=[os.path.basename(first_draft_path), os.path.basename(final_draft_path)],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -1887,7 +2203,7 @@ def parse_version_manifest(manifest_path: str) -> dict:
         | From | To | Type | Author | Notes |
         |------|-----|------|--------|-------|
         | v3 | v4 | structural | AI | ... |
-        | v5 | v6 | fine-grained | June | ... |
+        | v5 | v6 | fine-grained | user | ... |
 
     Tolerates extra whitespace, missing columns, and varying column order.
     """
@@ -2298,9 +2614,34 @@ def learn_from_sequence(
 
   □ Read each selected pair (FROM and TO) in full.
   □ Identify clause/sentence-level moves the human made deliberately.
-  □ Map to existing qualitative checks; propose additions for gaps.
-  □ Present proposed additions to the user for approval.
+  PROFILE ACTIONS
+  □ **Editorial discipline: the profile should sharpen with each loop, not grow. Treat addition as the option of last resort, after rephrase and merge are ruled out.**
+  □ Map each major change type to existing qualitative checks. Which checks predicted the change? (signals they're working.)
+  □ What is the smallest set of profile changes — additions, deletions, merges, or rephrasings — that would have caught the deliberate revision moves? Consider each lens:
+      • REPHRASE: did an existing check fire weakly because its instruction is imprecise? Sharpen the language.
+      • MERGE: did two or more checks point at the same concern from different angles? Collapse them, absorbing distinctive language.
+      • ROLE-REASSIGN or CUT: was a check tagged `pre_draft` that didn't actually shape this revision? Demote to `diagnostic`, or cut.
+      • ADD: is there a genuinely new pattern not covered? Specify role at insertion (pre_draft / linter / cda_sweep / diagnostic). If `pre_draft`, name what existing pre_draft check it replaces — the in-flight set is capped, additions force tradeoffs.
+      • CUT (silence): are there checks that haven't fired across this or the last several revisions? Flag for next audit.
+  □ For accepted additions and significant rephrasings, append an entry to `~/.claude/skills/voice-check/PROFILE_CHANGE_LOG.md`: source diff snippet (quoted, not summarized) + rationale + role + a question for the next audit. Merges and cuts don't require log entries (they reorganize existing rationale rather than create new). This preserves the *why* against rationale drift, separately from the citation log's tracking of *whether the check is still firing*.
+  □ Present proposed changes to the user for approval before updating.
 """)
+
+    # --- Citation tracking + DIAGNOSTIC REVIEW auto-trigger ---
+    profile_for_scan = load_profile(profile_path)
+    # Scan transition labels and notes — the per-transition diff strings
+    # aren't easily reassembled here, but the citation log entry is still
+    # valuable as a heartbeat for diagnostic-silence tracking.
+    scan_parts = [notes or ""]
+    for t in transitions:
+        scan_parts.append(f"{t.get('from_label','')} {t.get('to_label','')} {t.get('classification','')}")
+    scan_text = " ".join(scan_parts)
+    emit_cited_checks_and_update_log(
+        scanned_text=scan_text,
+        profile=profile_for_scan,
+        command="--learn-sequence" + (" --dry-run" if dry_run else ""),
+        files=[os.path.basename(p) for p in file_paths],
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -2442,7 +2783,33 @@ def main():
         help="With --learn-sequence: report classifications and what WOULD be updated, "
              "without writing to profile"
     )
+    parser.add_argument(
+        "--audit-diagnostics", action="store_true", dest="audit_diagnostics",
+        help="Read-only report on diagnostic-role checks: last-cited dates, "
+             "citation counts. Auto-triggered when a diagnostic check has been "
+             "silent for 5+ runs."
+    )
+    parser.add_argument(
+        "--log-cited-checks", type=str, dest="log_cited_checks", default=None,
+        help="Comma-separated check IDs to append to the most recent run's "
+             "citation log entry. Called by agents after Phase 4 CDA sweep "
+             "to record which checks fired during revision."
+    )
     args = parser.parse_args()
+
+    # Audit diagnostics mode (no draft file required)
+    if args.audit_diagnostics:
+        run_audit_diagnostics(profile_path=args.profile)
+        return
+
+    # Post-analysis citation logging (no draft file required)
+    if args.log_cited_checks:
+        ids = [s.strip() for s in args.log_cited_checks.split(",") if s.strip()]
+        if not ids:
+            print("Error: --log-cited-checks requires at least one ID", file=sys.stderr)
+            sys.exit(1)
+        log_cited_checks_postanalysis(ids, profile_path=args.profile)
+        return
 
     # Diff-only mode (no profile required)
     if args.diff:
