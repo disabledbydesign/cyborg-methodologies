@@ -32,7 +32,7 @@ Each is a prompt to *stop and excavate*. Each is also worth logging (it's data f
 
 - **Reinventing the wheel** — about to design something that may already exist → check the corpus first.
 - **Can't trace the origin** — a term or decision nobody can source → archaeology, or treat it as open, not as fact.
-- **Label without concept** — a name carrying weight the concept should carry; the reader can't follow → plain words.
+- **Label without concept** — a name carrying weight the concept should carry; the reader can't follow → plain words. *(This signal also runs as a **post-draft** check — `descriptions_before_labels` in voice-check's `claude.json` profile — so it's caught at two moments: at design-time here, and on finished prose there. Keep the two runs distinct; the separation is what catches what a warm drafting pass misses.)*
 - **Flat claim asserted as truth** — a once-conditioned observation now restated as a law, its provenance gone → trace it; re-attach its conditions. (This is drift-by-recurrence: a claim gaining authority just by being repeated.)
 - **Laundry-list / "this feels artificial"** — usually a sign that a top-down taxonomy is being imposed, or that concerns from one layer are mis-filed into another → check the lane; ground in practice.
 
