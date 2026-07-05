@@ -2708,6 +2708,274 @@ def run_analysis(filepath: str, target: int = 1200) -> dict:
     return results
 
 
+# ---------------------------------------------------------------------------
+# gra-memory-creation genre: field-grain regex checks (T4/T5)
+#
+# Net-new executable machinery for the gra-memory-creation genre — see
+# design/gra_memory_creation_genre_SPEC.md (grounded-recollection repo) §5-§6.
+# These are floor-raisers: every check below emits FLAGS, NEVER A SCORE. Several
+# are explicitly prompt-only — a judgment call the agent or human makes, not an
+# auto-correct or a block. The whole module runs per-FIELD (#28): a GRA record's
+# drawer surfaces fields (context, content, stakes, standpoint, ...) that a later
+# reader may encounter as isolated fragments, so a pass on the concatenated
+# record is not a pass on each fragment. `verbatim` and any field marked
+# {"opaque": true} are exempt from ALL flagging — fidelity, not polish, and the
+# recordable-refusal permission (marked-opaque), respectively.
+# ---------------------------------------------------------------------------
+
+GRA_LABEL_SHORTHAND_PATTERNS = [
+    r"\bR\d+\b",             # record shorthand (R4, R7...)
+    r"\bS\d+\b",             # session shorthand (S45, S46...)
+    r"\bb\d\b",              # branch/pole shorthand (b1, b2...)
+    r"`[0-9a-f]{6,}[0-9a-f…]*`",  # backticked hex ids / uuid prefixes
+]
+
+GRA_CHRONOLOGY_OPENER_PATTERNS = [
+    r"^Session \d+",
+    r"^By ",
+    r"^After ",
+    r"^When ",
+    r"^During ",
+    r"^\d{4}-\d{2}-\d{2}",
+]
+
+GRA_THROAT_CLEARING_OPENER_PATTERNS = [
+    r"^There (is|are|was|were)\b",
+    r"^This is (a|the)\b",
+    r"^These are\b",
+    r"^That is\b",
+    # Flat-abstraction-as-subject openers (R7's stakes v1: "The story's weight falls on
+    # instances not in the room") — a named abstraction bearing a weak verb, no concrete
+    # agent+action. Generalizes the construction rather than hardcoding the one sentence.
+    r"^The \w+('s \w+)? (falls?|rests?|lies?|weighs?|hangs?) on\b",
+]
+
+GRA_AUTHORITY_ABSTRACTION_PATTERN = re.compile(
+    r"\b((?:the|this|our) (?:architecture|system|design|framework|model|record|values file|commitment)|GRA|kintsugi)\b"
+    r".{0,20}?\b(refuses?|requires?|demands?|rejects?|insists?|enforces?|forbids?|dictates?)\b",
+    re.IGNORECASE,
+)
+
+GRA_MODALITY_UNIVERSAL = [r"\bnever\b", r"\balways\b", r"\ball\b", r"\bnone\b", r"\bmust\b",
+                          r"\bonly\b", r"\bentails?\b"]
+# "any" is deliberately excluded — the retired blind census misfired on ordinary situated
+# prose ("any situated position can be revised"); see SPEC §5.
+GRA_MODALITY_STRONGEST = [r"\bnever\b", r"\balways\b", r"\bnone\b"]
+
+GRA_DEMOTION_VERBS = [r"\bdissolves?\b", r"\breplaces?\b", r"\boverturns?\b", r"\bcorrects?\b",
+                      r"\bsupersedes?\b", r"\binvalidates?\b"]
+GRA_NON_DEMOTING_RELATIONS = {"elaborates", "in_tension_with"}
+
+
+def load_gra_lexicon(path: str = None) -> list:
+    """Load the project-local lexicon: [{term, gloss, source?}, ...]
+    (design/gra_genre_lexicon.json in the grounded-recollection repo). Returns []
+    if no path is given or the file doesn't exist — the checker still runs the
+    bare shorthand patterns (R\\d+ / S\\d+ / b\\d / hex ids), just without the
+    project-coinage terms."""
+    if not path or not os.path.isfile(path):
+        return []
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _gra_field_text(field_value):
+    """A drawer field value is either a plain string, or {"text", "opaque", "rationale"}
+    marking a deliberately un-glossed claim (the marked-opaque permission). Returns
+    (text, is_opaque)."""
+    if isinstance(field_value, dict):
+        return field_value.get("text", ""), bool(field_value.get("opaque"))
+    return field_value, False
+
+
+def _gra_sentences(text: str) -> list:
+    try:
+        return sent_tokenize(text)
+    except Exception:
+        return [text] if text else []
+
+
+def check_label_without_descriptor(field_name: str, text: str, lexicon: list) -> list:
+    """Flag internal shorthand (R4, S45, b2, backticked hex ids, project coinages) used
+    with no plain-language descriptor in the same sentence. The gloss heuristic is
+    deliberately crude (a parenthetical anywhere in the sentence) per the SPEC's own
+    worked examples: PASSES 'the Session-2 revision frame (R3: any situated position can
+    be revised, owned and recorded)'; FLAGS 'after the R3 collapse, ...'."""
+    findings = []
+    for sent in _gra_sentences(text):
+        has_gloss = "(" in sent
+        for pat in GRA_LABEL_SHORTHAND_PATTERNS:
+            for m in re.finditer(pat, sent):
+                if not has_gloss:
+                    findings.append({
+                        "field": field_name, "term": m.group(),
+                        "sentence": sent.strip()[:160],
+                        "flag": "label-without-descriptor",
+                    })
+        for entry in lexicon:
+            term = entry.get("term", "")
+            if term and term.lower() in sent.lower() and not has_gloss:
+                findings.append({
+                    "field": field_name, "term": term,
+                    "sentence": sent.strip()[:160],
+                    "flag": "label-without-descriptor (lexicon coinage)",
+                })
+    return findings
+
+
+def check_chronology_opener(field_name: str, text: str) -> list:
+    """Flag a field whose first sentence opens with temporal/session scene-setting
+    instead of what-this-is (the R4 v1 failure)."""
+    sentences = _gra_sentences(text)
+    if not sentences:
+        return []
+    first = sentences[0].strip()
+    for pat in GRA_CHRONOLOGY_OPENER_PATTERNS:
+        if re.match(pat, first):
+            return [{
+                "field": field_name, "sentence": first[:160],
+                "flag": "chronology-opener: opens with temporal/session scene-setting",
+            }]
+    return []
+
+
+def check_throat_clearing(field_name: str, text: str) -> list:
+    """Per-paragraph deletion-test prompt (#27, skill 'Pass 1.5'): flag an opening
+    sentence that is a flat copular/existential frame with no concrete agent+action.
+    Prompt only — the agent or human makes the actual cut decision."""
+    findings = []
+    paragraphs = [p for p in re.split(r"\n\s*\n", text) if p.strip()] or [text]
+    for para in paragraphs:
+        sentences = _gra_sentences(para)
+        if not sentences:
+            continue
+        first = sentences[0].strip()
+        for pat in GRA_THROAT_CLEARING_OPENER_PATTERNS:
+            if re.match(pat, first):
+                findings.append({
+                    "field": field_name, "sentence": first[:160],
+                    "flag": "throat-clearing: deletion-test prompt — "
+                            "is this paragraph stronger without its opener?",
+                })
+                break
+    return findings
+
+
+def check_authority_in_abstraction(field_name: str, text: str) -> list:
+    """Known-pattern spot-check (#24), not a general rule: an abstract noun as agent of
+    an authority verb ('the architecture refuses', 'GRA requires'), where a real party +
+    basis is meant. Prompt only — the regex catches the surface form; whether the
+    theoretical basis is glossed out is the agent's real call."""
+    findings = []
+    for m in GRA_AUTHORITY_ABSTRACTION_PATTERN.finditer(text):
+        findings.append({
+            "field": field_name, "match": m.group()[:120],
+            "flag": "authority-in-abstraction: render the basis (whose position / which "
+                    "recorded ask / which lineage), not the gloss — prompt only",
+        })
+    return findings
+
+
+def check_modality_fidelity(content_text: str, verbatim_text: str = None) -> list:
+    """Compare content's modality strength against its own verbatim/source field — not a
+    blind keyword census. Flags only where content is stronger than the source licenses
+    (source weak -> content universal). Never auto-rewrites. Fallback where no verbatim
+    exists: flag-for-confirmation on the strongest terms only (never/always/none) — the
+    wide census was retired as high-false-positive (it misfired on 'any situated position
+    can be revised')."""
+    findings = []
+    for sent in _gra_sentences(content_text):
+        if verbatim_text:
+            verbatim_has_universal = any(
+                re.search(p, verbatim_text, re.IGNORECASE) for p in GRA_MODALITY_UNIVERSAL
+            )
+            for pat in GRA_MODALITY_UNIVERSAL:
+                m = re.search(pat, sent, re.IGNORECASE)
+                if m and not verbatim_has_universal:
+                    findings.append({
+                        "term": m.group(), "sentence": sent.strip()[:160],
+                        "flag": "modality-fidelity: content stronger than verbatim licenses "
+                                "(flag for downgrade or attribution)",
+                    })
+        else:
+            for pat in GRA_MODALITY_STRONGEST:
+                m = re.search(pat, sent, re.IGNORECASE)
+                if m:
+                    findings.append({
+                        "term": m.group(), "sentence": sent.strip()[:160],
+                        "flag": "modality-fidelity: flag-for-confirmation "
+                                "(no verbatim field to check against)",
+                    })
+    return findings
+
+
+def check_relation_agreement(content_text: str, relation: str = None) -> list:
+    """Language<->relation agreement (the skill's claim-fidelity check, verb side): flag
+    demotion verbs (dissolve/replace/overturn/correct/supersede/invalidate) in a record
+    whose declared relation is non-demoting (elaborates, in_tension_with)."""
+    findings = []
+    if not relation or relation not in GRA_NON_DEMOTING_RELATIONS:
+        return findings
+    for pat in GRA_DEMOTION_VERBS:
+        for m in re.finditer(pat, content_text, re.IGNORECASE):
+            findings.append({
+                "term": m.group(),
+                "flag": f"language-relation mismatch: demotion verb in a '{relation}' record",
+            })
+    return findings
+
+
+def run_gra_record_checks(drawer: dict, lexicon: list = None, relation: str = None) -> dict:
+    """The genre's field-grain input handler (#28): the checker's default input is the
+    assembled drawer, and every executable check runs ONCE PER FIELD, reporting which
+    field a flag came from — a pass on the concatenated record is not a pass on the
+    fragment. `verbatim` is exempt from all flagging (used only as the modality
+    reference); any field marked {"opaque": true} is exempt from all flagging (the
+    marked-opaque permission)."""
+    lexicon = lexicon or []
+    verbatim_text, _ = _gra_field_text(drawer.get("verbatim", ""))
+    verbatim_text = verbatim_text or None
+
+    results = {}
+    for field_name, field_value in drawer.items():
+        if field_name in ("verbatim", "relation"):
+            continue
+        text, is_opaque = _gra_field_text(field_value)
+        if is_opaque or not text or not isinstance(text, str):
+            continue
+
+        field_findings = []
+        field_findings += check_label_without_descriptor(field_name, text, lexicon)
+        field_findings += check_chronology_opener(field_name, text)
+        field_findings += check_throat_clearing(field_name, text)
+        field_findings += check_authority_in_abstraction(field_name, text)
+        if field_name == "content":
+            field_findings += check_modality_fidelity(text, verbatim_text)
+            field_findings += check_relation_agreement(text, relation)
+        if field_findings:
+            results[field_name] = field_findings
+    return results
+
+
+def format_gra_record_report(results: dict) -> str:
+    """Inline-at-location report (skill §1h / #27): flags grouped by field, plain words,
+    no end-of-doc flag list, no score — ever."""
+    lines = ["", "  GRA-MEMORY-CREATION FLOOR-RAISER REPORT (floor only — no clarity score)", ""]
+    if not results:
+        lines.append("  No floor-raiser flags. This is not a pass/fail verdict — the field-grain")
+        lines.append("  cold-read and the genre's agent-read qualitative checks still apply.")
+        return "\n".join(lines)
+    for field_name, findings in results.items():
+        lines.append(f"  [{field_name}]")
+        for f in findings:
+            lines.append(f"    - {f['flag']}")
+            snippet = f.get("sentence") or f.get("match") or f.get("term", "")
+            if snippet:
+                lines.append(f"      → \"{snippet}\"")
+        lines.append("")
+    return "\n".join(lines)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Voicing analysis for draft documents. Supports configurable voice profiles."
@@ -2737,6 +3005,26 @@ def main():
         "--genre", type=str, default=None,
         help="Genre for threshold selection (e.g., research_paper, academic_position). "
              "Uses genre-specific threshold overrides and word count target from profile."
+    )
+    parser.add_argument(
+        "--record", type=str, default=None, metavar="RECORD_JSON",
+        help="gra-memory-creation field-grain mode: path to a JSON file of a GRA record's "
+             "drawer fields ({\"context\": ..., \"content\": ..., \"stakes\": ..., "
+             "\"standpoint\": ..., \"verbatim\": ...}). Runs the genre's floor-raiser checks "
+             "(label-without-descriptor, chronology-opener, throat-clearing, "
+             "authority-in-abstraction, modality-fidelity) once per field. A field value may "
+             "be {\"text\": ..., \"opaque\": true, \"rationale\": ...} to mark it exempt "
+             "(the marked-opaque permission). No profile/genre thresholds needed for this mode."
+    )
+    parser.add_argument(
+        "--lexicon", type=str, default=None, metavar="LEXICON_JSON",
+        help="With --record: path to design/gra_genre_lexicon.json ([{term, gloss}]) for the "
+             "label-without-descriptor check's project-coinage patterns."
+    )
+    parser.add_argument(
+        "--relation", type=str, default=None, choices=["elaborates", "in_tension_with", "supersedes"],
+        help="With --record: the record's declared relation, for the language<->relation "
+             "agreement check (demotion verbs flagged only against non-demoting relations)."
     )
     parser.add_argument(
         "--learn", nargs=2, metavar=("FIRST_DRAFT", "FINAL_DRAFT"),
@@ -2796,6 +3084,24 @@ def main():
              "to record which checks fired during revision."
     )
     args = parser.parse_args()
+
+    # gra-memory-creation field-grain record mode (no profile/genre thresholds required)
+    if args.record:
+        if not os.path.isfile(args.record):
+            print(f"Error: Record file not found: {args.record}", file=sys.stderr)
+            sys.exit(1)
+        with open(args.record, "r", encoding="utf-8") as f:
+            drawer = json.load(f)
+        lexicon = load_gra_lexicon(args.lexicon)
+        if args.lexicon and not lexicon:
+            print(f"Warning: --lexicon given but no terms loaded from {args.lexicon}",
+                  file=sys.stderr)
+        results = run_gra_record_checks(drawer, lexicon=lexicon, relation=args.relation)
+        if args.output_json:
+            print(json.dumps(results, indent=2, ensure_ascii=False))
+        else:
+            print(format_gra_record_report(results))
+        return
 
     # Audit diagnostics mode (no draft file required)
     if args.audit_diagnostics:
