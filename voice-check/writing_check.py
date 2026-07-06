@@ -2876,13 +2876,26 @@ def check_authority_in_abstraction(field_name: str, text: str) -> list:
     return findings
 
 
+_GRA_NEGATION_PRECEDING = re.compile(r"\b(not|n't|never|no|nor)\b\s*(\w+\s+){0,2}$", re.IGNORECASE)
+
+
+def _gra_is_negated(sent: str, match_start: int) -> bool:
+    """A universal term preceded within ~2 words by a negator ('does not entail', 'isn't
+    always') is a HEDGE, not a strengthened claim — the literal opposite of what this check
+    is trying to catch. Found via end-to-end testing (2026-07-05): 'it does not entail that
+    every prior position gets silently overwritten' was flagging as an unlicensed universal
+    claim on the word 'entail' alone, with the negation ignored."""
+    return bool(_GRA_NEGATION_PRECEDING.search(sent[:match_start]))
+
+
 def check_modality_fidelity(content_text: str, verbatim_text: str = None) -> list:
     """Compare content's modality strength against its own verbatim/source field — not a
     blind keyword census. Flags only where content is stronger than the source licenses
     (source weak -> content universal). Never auto-rewrites. Fallback where no verbatim
     exists: flag-for-confirmation on the strongest terms only (never/always/none) — the
     wide census was retired as high-false-positive (it misfired on 'any situated position
-    can be revised')."""
+    can be revised'). A negated universal term ('does not entail', 'not always') is
+    skipped — negation weakens a claim, it doesn't strengthen it."""
     findings = []
     for sent in _gra_sentences(content_text):
         if verbatim_text:
@@ -2891,7 +2904,7 @@ def check_modality_fidelity(content_text: str, verbatim_text: str = None) -> lis
             )
             for pat in GRA_MODALITY_UNIVERSAL:
                 m = re.search(pat, sent, re.IGNORECASE)
-                if m and not verbatim_has_universal:
+                if m and not verbatim_has_universal and not _gra_is_negated(sent, m.start()):
                     findings.append({
                         "term": m.group(), "sentence": sent.strip()[:160],
                         "flag": "modality-fidelity: content stronger than verbatim licenses "
@@ -2900,7 +2913,7 @@ def check_modality_fidelity(content_text: str, verbatim_text: str = None) -> lis
         else:
             for pat in GRA_MODALITY_STRONGEST:
                 m = re.search(pat, sent, re.IGNORECASE)
-                if m:
+                if m and not _gra_is_negated(sent, m.start()):
                     findings.append({
                         "term": m.group(), "sentence": sent.strip()[:160],
                         "flag": "modality-fidelity: flag-for-confirmation "
