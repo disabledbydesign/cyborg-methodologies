@@ -24,7 +24,12 @@ list_files() {
     if [ $first = 1 ]; then args+=( '(' -name "$p" ); first=0
     else args+=( -o -name "$p" ); fi
   done
-  args+=( ')' -prune -o -type f )
+  # -type l as well as -type f. A SYMLINK IS A PRESENT FILE. The repo's
+  # voice-check/profiles/june_bloch.json is a symlink to the private copy in the
+  # Job Search workspace; with `-type f` alone the repo looked like it did not
+  # have that file, so rescue_skill.sh would have "restored" the older installed
+  # copy straight through the symlink and silently reverted the profile.
+  args+=( ')' -prune -o '(' -type f -o -type l ')' )
   for p in "${IGNORE_FILES[@]}"; do args+=( ! -name "$p" ); done
   args+=( -print )
   ( cd "$d" && find . "${args[@]}" 2>/dev/null | LC_ALL=C sort )
