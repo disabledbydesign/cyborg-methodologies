@@ -19,7 +19,6 @@
 #   bash link_skills.sh              report what each skill is; change nothing
 #   bash link_skills.sh --migrate    link the ones that are provably safe
 #   bash link_skills.sh --migrate --skill critic-swarm    just one
-#   bash link_skills.sh --show-ignored   also list what the comparison skipped
 
 set -euo pipefail
 
@@ -27,27 +26,27 @@ REPO="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
 SKILLS="${SKILLS_DIR:-${HOME}/.claude/skills}"   # SKILLS_DIR override exists so these scripts can be tested against a fixture
 MIGRATE=0
 ONLY=""
-SHOW_IGNORED=0
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --migrate) MIGRATE=1 ;;
     --skill) ONLY="${2:-}"; shift ;;
-    --show-ignored) SHOW_IGNORED=1 ;;
     -h|--help) sed -n '1,26p' "$0"; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
   shift
 done
 
-# Shared definition of what counts as work vs. regenerable noise.
-source "${REPO}/skills_common.sh"
+# The comparison — one definition, shared with rescue_skill.sh. It was
+# find|sort|comm here and returned WRONG ANSWERS on macOS; see the header of
+# skills_compare.py.
+COMPARE="${REPO}/skills_compare.py"
 
 echo "repo:   ${REPO}"
 echo "skills: ${SKILLS}"
 [ "$MIGRATE" = 1 ] && echo "mode:   --migrate (will link only what is provably safe)" \
                    || echo "mode:   report only — nothing will change"
-echo "ignore: $(ignore_summary)"
+echo "ignore: $(python3 "$COMPARE" --ignore-summary)"
 echo
 
 [ -d "$SKILLS" ] || { echo "no ${SKILLS} — nothing to do"; exit 1; }
@@ -89,25 +88,11 @@ for repo_skill in "$REPO"/*/; do
   # A real directory. Compare before considering replacement.
   echo "  ${name}: REAL DIRECTORY — the repo copy is not in service"
 
-  counted="$(list_files "$installed" | wc -l | tr -d ' ')"
-  total="$(count_all "$installed")"
-  echo "      comparing ${counted} of ${total} installed files ($((total - counted)) ignored as regenerable)"
-
-  only_installed="$(comm -13 <(list_files "$target") <(list_files "$installed") || true)"
-  differing=""
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    if [ -f "${target}/${f}" ] && ! cmp -s "${installed}/${f}" "${target}/${f}"; then
-      differing="${differing}${f}"$'\n'
-    fi
-  done < <(list_files "$installed")
-
-  if [ "$SHOW_IGNORED" = 1 ]; then
-    echo "      ignored here:"
-    ( cd "$installed" && find . -type f 2>/dev/null ) | LC_ALL=C sort \
-      | comm -23 - <(list_files "$installed") \
-      | sed 's|^\./||' | awk -F/ '{print $1"/"$2}' | sort -u | sed 's/^/           /' | head -20
-  fi
+  json="$(python3 "$COMPARE" "$target" "$installed" --json)"
+  read_field() { printf '%s' "$json" | python3 -c "import json,sys;d=json.load(sys.stdin);v=d['$1'];print('\n'.join(v) if isinstance(v,list) else v)"; }
+  echo "      comparing $(read_field counted) of $(read_field total) installed files ($(read_field ignored) ignored as regenerable)"
+  only_installed="$(read_field missing)"
+  differing="$(read_field differing)"
 
   if [ -n "$only_installed" ] || [ -n "$differing" ]; then
     echo "      ⛔ BLOCKED — the installed copy holds work the repo does not:"

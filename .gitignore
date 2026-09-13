@@ -50,3 +50,13 @@ graphify-out/
 .claude/
 **/.claude/
 .obsidian/
+
+# Personal voice-check material. These describe how JUNE writes, not how the
+# method works, so they live in the private Job Search repo. TEST_B_PREDRAFT_EXTRACT
+# is the sharpest case: 40 KB containing 33 of the profile's checks with their full
+# instruction text — publishing it publishes a third of june_bloch.json.
+# PROFILE_CHANGE_LOG.md is symlinked back because writing_check.py names that path.
+voice-check/PROFILE_CHANGE_LOG.md
+voice-check/AUDIT_REPORT_*.md
+voice-check/AGENT_FEEDBACK_*.md
+voice-check/TEST_B_PREDRAFT_EXTRACT.json

@@ -11,6 +11,9 @@
 # file as <file>.installed-copy for you to diff and resolve by hand. Choosing
 # between two real versions is a judgement, not a file operation.
 #
+# The comparison itself lives in skills_compare.py. It used to be find|sort|comm
+# here, which returned WRONG ANSWERS on macOS — see that file's header.
+#
 #   bash rescue_skill.sh voice-check           report; change nothing
 #   bash rescue_skill.sh voice-check --apply   copy the missing files in
 #   bash rescue_skill.sh --all --apply         every blocked skill
@@ -18,8 +21,8 @@
 set -euo pipefail
 
 REPO="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
-source "${REPO}/skills_common.sh"
-SKILLS="${SKILLS_DIR:-${HOME}/.claude/skills}"   # SKILLS_DIR override exists so these scripts can be tested against a fixture
+COMPARE="${REPO}/skills_compare.py"
+SKILLS="${SKILLS_DIR:-${HOME}/.claude/skills}"
 APPLY=0
 NAMES=()
 
@@ -27,7 +30,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
     --all)   NAMES=(__ALL__) ;;
-    -h|--help) sed -n '1,20p' "$0"; exit 0 ;;
+    -h|--help) sed -n '1,21p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) NAMES+=("$1") ;;
   esac
@@ -49,30 +52,31 @@ fi
 echo "repo:   ${REPO}"
 echo "skills: ${SKILLS}"
 [ "$APPLY" = 1 ] && echo "mode:   --apply (will copy files in)" || echo "mode:   report only — nothing will change"
-echo "ignore: $(ignore_summary)"
+echo "ignore: $(python3 "$COMPARE" --ignore-summary)"
 echo
 
-COPIED=0; CONFLICTS=0
+COPIED=0; CONFLICTS=0; BAD_NAME=0
 
 for name in "${NAMES[@]}"; do
   installed="${SKILLS}/${name}"
   target="${REPO}/${name}"
   echo "  ${name}"
-  if [ ! -d "$installed" ]; then echo "      no installed copy — nothing to rescue"; continue; fi
+
+  # An unrecognised name is a typo, not a no-op. zsh does not strip `#` comments
+  # from an interactive line, so a pasted `rescue_skill.sh voice-check  # report`
+  # arrives here as three arguments; saying so beats silently doing nothing.
+  if [ ! -d "$target" ]; then
+    echo "      ✗ no such skill in this repo — check the name"; BAD_NAME=1; continue
+  fi
   if [ -L "$installed" ]; then echo "      already a symlink — nothing to rescue"; continue; fi
-  [ -d "$target" ] || { echo "      no repo directory ${target} — refusing to guess"; continue; }
+  if [ ! -d "$installed" ]; then echo "      no installed copy — nothing to rescue"; continue; fi
 
-  missing="$(comm -13 <(list_files "$target") <(list_files "$installed") || true)"
-  differing=""
-  while IFS= read -r f; do
-    [ -z "$f" ] && continue
-    if [ -f "${target}/${f}" ] && ! cmp -s "${installed}/${f}" "${target}/${f}"; then
-      differing="${differing}${f}"$'\n'
-    fi
-  done < <(list_files "$installed")
-
-  n_missing=0; [ -n "$missing" ] && n_missing=$(echo "$missing" | grep -c . || true)
-  n_diff=0;    [ -n "$differing" ] && n_diff=$(echo "$differing" | grep -c . || true)
+  json="$(python3 "$COMPARE" "$target" "$installed" --json)"
+  read_list() { printf '%s' "$json" | python3 -c "import json,sys;print('\n'.join(json.load(sys.stdin)['$1']))"; }
+  missing="$(read_list missing)"
+  differing="$(read_list differing)"
+  n_missing=0; [ -n "$missing" ] && n_missing=$(printf '%s\n' "$missing" | grep -c .)
+  n_diff=0;    [ -n "$differing" ] && n_diff=$(printf '%s\n' "$differing" | grep -c .)
   echo "      ${n_missing} file(s) only in ~/.claude, ${n_diff} file(s) differing"
 
   if [ -n "$missing" ]; then
@@ -80,11 +84,15 @@ for name in "${NAMES[@]}"; do
       [ -z "$f" ] && continue
       if [ "$APPLY" = 1 ]; then
         mkdir -p "$(dirname "${target}/${f}")"
-        cp -p "${installed}/${f}" "${target}/${f}"
-        echo "      + ${f#./}"
-        COPIED=$((COPIED+1))
+        # -n: never clobber. skills_compare.py already established this path is
+        # absent from the repo; if something is there anyway, stop rather than write.
+        if cp -pn "${installed}/${f}" "${target}/${f}" 2>/dev/null; then
+          echo "      + ${f}"; COPIED=$((COPIED+1))
+        else
+          echo "      ! ${f}  — could not copy; left alone"
+        fi
       else
-        echo "      would copy: ${f#./}"
+        echo "      would copy: ${f}"
       fi
     done <<< "$missing"
   fi
@@ -94,9 +102,9 @@ for name in "${NAMES[@]}"; do
       [ -z "$f" ] && continue
       if [ "$APPLY" = 1 ]; then
         cp -p "${installed}/${f}" "${target}/${f}.installed-copy"
-        echo "      ? ${f#./}  -> staged as ${f#./}.installed-copy (resolve by hand)"
+        echo "      ? ${f}  -> staged as ${f}.installed-copy (resolve by hand)"
       else
-        echo "      would stage for review: ${f#./}"
+        echo "      would stage for review: ${f}"
       fi
       CONFLICTS=$((CONFLICTS+1))
     done <<< "$differing"
@@ -111,4 +119,5 @@ if [ "$APPLY" = 1 ]; then
 else
   echo "Nothing changed. Re-run with --apply."
 fi
+[ "$BAD_NAME" = 1 ] && exit 2
 exit 0
