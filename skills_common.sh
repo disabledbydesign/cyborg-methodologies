@@ -14,7 +14,7 @@
 
 PRUNE_DIRS=(.git .venv venv env node_modules __pycache__ .pytest_cache
             .mypy_cache .ruff_cache .ipynb_checkpoints .tox)
-IGNORE_FILES=('*.pyc' '*.pyo' '.DS_Store' '*.egg-info' '*.bak' '*.bak.*'
+IGNORE_FILES=('*.pyc' '*.pyo' '.DS_Store' '*.egg-info' '*.bak' '*.bak.*' '*.installed-copy'
               '*.orig' '*.rej' '*~')
 
 # list_files <dir> — files that count, as ./relative/paths, sorted

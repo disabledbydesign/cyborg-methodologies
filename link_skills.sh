@@ -24,7 +24,7 @@
 set -euo pipefail
 
 REPO="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
-SKILLS="${HOME}/.claude/skills"
+SKILLS="${SKILLS_DIR:-${HOME}/.claude/skills}"   # SKILLS_DIR override exists so these scripts can be tested against a fixture
 MIGRATE=0
 ONLY=""
 SHOW_IGNORED=0
@@ -111,8 +111,8 @@ for repo_skill in "$REPO"/*/; do
 
   if [ -n "$only_installed" ] || [ -n "$differing" ]; then
     echo "      ⛔ BLOCKED — the installed copy holds work the repo does not:"
-    [ -n "$only_installed" ] && { echo "         files only in ~/.claude:"; echo "$only_installed" | sed 's/^/           /'; }
-    [ -n "$differing" ]      && { echo "         files whose content differs:"; echo "$differing" | sed 's/^/           /'; }
+    [ -n "$only_installed" ] && { echo "         files only in ~/.claude:"; printf '%s\n' "$only_installed" | grep . | sed 's/^/           /'; }
+    [ -n "$differing" ]      && { echo "         files whose content differs:"; printf '%s\n' "$differing" | grep . | sed 's/^/           /'; }
     echo "      Run  bash rescue_skill.sh ${name}  to copy them in, then commit and re-run."
     BLOCKED=$((BLOCKED+1)); continue
   fi

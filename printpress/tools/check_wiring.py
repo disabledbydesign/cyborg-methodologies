@@ -25,6 +25,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import hashlib
 import re
 import sys
@@ -53,6 +54,9 @@ SKIP_DIR_PARTS = {".git", "node_modules", "__pycache__", ".pytest_cache", "venv"
 BACKTICKED = re.compile(r"`([^`\n]{2,200})`")
 LINE_ANCHOR = re.compile(r"`?([\w./-]+\.(?:md|py|json|yml|html))[:#](\d+)(?:-\d+)?`?")
 ABS_HOME = re.compile(r"/Users/[A-Za-z0-9_.-]+/")
+# "if it exists", "when one exists", "if any", "should one exist"
+CONDITIONAL = re.compile(r"\b(if|when|should)\s+(it|one|they|any|present)\b[^.]{0,20}\bexists?\b"
+                         r"|\bif\s+(it|one|any)\s+exists\b|\bif\s+present\b|\bif\s+any\b", re.I)
 
 
 # Memory keys (`feedback_topic_sentences`, `project_wennergren_state`) and filename
@@ -73,12 +77,57 @@ def is_pathlike(tok: str) -> bool:
             return False
     if any(c in tok for c in "[]<>*|$(){}"):
         return False            # placeholder or shell
+    # A filename template is not a missing file. `triage_results_YYYY-MM-DD.md`
+    # and `job_search_results_linkedin_YYYY-MM-DD.json` are instructions for
+    # naming an output, and no such file is ever supposed to exist.
+    if re.search(r"(YYYY|MM-DD|HH:MM|<date>|\bNNN\b)", tok):
+        return False
+    # An elided path is a human abbreviation, not an address. `.../Internal Docs/x`
+    # and `critic-swarm/…/ats-compatibility.md` were written to be readable, and
+    # resolving them is not possible even in principle.
+    if "..." in tok or "\u2026" in tok:
+        return False
     if tok.startswith(("http://", "https://", "/printpress", "/critic-swarm", "/workshop", "/voice-check")):
         return False
-    if re.match(r"^[\w.-]+\.(com|org|net|edu|io|ai)\b", tok):
-        return False                    # a bare domain, not a path
+    # A hostname with a path after it is a URL missing its scheme, not a file.
+    if re.match(r"^[\w-]+(\.[\w-]+)*\.(com|org|net|edu|gov|io|ai|co|uk|dev)\b", tok):
+        return False
     suffix = Path(tok.split(":")[0].split("#")[0]).suffix.lower()
     return suffix in PATH_EXTS or (tok.endswith("/") and "/" in tok)
+
+
+# ---------------------------------------------------------------------------
+# THE ACTIVE READER SET vs. THE ARCHIVE.
+#
+# A dead reference in SKILL.md misroutes a live workflow: an agent follows it
+# mid-draft and lands nowhere. A dead reference in an evidence write-up from
+# August records where a file WAS when the write-up was made. The first is a
+# defect; the second is history. Reporting both under one number made this check
+# unusable as a gate — it failed with 86 findings, four of which were real, and a
+# gate that always fails is a gate nobody reads.
+#
+# So only the active set blocks. Everything else is reported and does not fail.
+# ---------------------------------------------------------------------------
+ACTIVE_NAMES = {"SKILL.md", "PIPELINE.md", "DRAFTING_STANDARD.md",
+                "CLAUDE.md", "AGENTS.md"}
+ACTIVE_DIRS = {"genre_configs", "templates", "tools", "personas", "_always", "workflows"}
+# Names that announce themselves as a record of one moment.
+ARCHIVE_MARKERS = re.compile(
+    r"(HANDOFF|FIELDNOTE|SWEEP|AUDIT|REVISION_ANALYSIS|RESEARCH_SYNTHESIS|"
+    r"READING_LIST|EXTRACTION_NOTES|_\d{4}-\d{2}-\d{2}| copy)")
+ARCHIVE_DIRS = {"_application_evidence", "agent_briefs", "synthesis", "outputs",
+                "workflow-learning", "memos", "feedback"}
+
+
+def is_active(p: Path) -> bool:
+    """Does an agent follow this file's citations while drafting?"""
+    if ARCHIVE_MARKERS.search(p.name):
+        return False
+    if any(part in ARCHIVE_DIRS for part in p.parts):
+        return False
+    if p.name in ACTIVE_NAMES:
+        return True
+    return p.parent.name in ACTIVE_DIRS
 
 
 # Files whose citations we check. The drafting workflow only — sibling skills
@@ -203,19 +252,42 @@ def is_redirect_stub(p: Path) -> bool:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--root", action="append", default=[], help="extra root to scan (repeatable)")
+    ap.add_argument("--root", action="append", default=[],
+                    help="scan exactly this root instead of auto-detecting (repeatable)")
     ap.add_argument("--quiet", action="store_true")
+    ap.add_argument("--full", action="store_true", help="print every finding, not the first 25")
     args = ap.parse_args()
 
-    roots = [SKILL_ROOT]
-    if (SKILL_ROOT.parent / "critic-swarm").exists():
-        roots = [SKILL_ROOT.parent]          # the whole skills repo
-    for r in args.root:
-        roots.append(Path(r).expanduser().resolve())
-    # Auto-detect the workspace if it sits where the skill expects it.
-    for guess in (Path.home() / "Documents/Filing/Job Search",):
-        if guess.exists() and guess not in roots:
-            roots.append(guess)
+    # --root means "scan exactly these", not "these as well". Auto-detection is a
+    # convenience for the bare interactive run; when a caller names its roots it
+    # wants those and nothing else. Mixing the two silently pulled the real
+    # workspace into the test suite's temporary trees, so every test saw the whole
+    # of Job Search and the fixtures stopped meaning anything.
+    if args.root:
+        roots = [Path(r).expanduser().resolve() for r in args.root]
+    else:
+        roots = [SKILL_ROOT]
+        if (SKILL_ROOT.parent / "critic-swarm").exists():
+            roots = [SKILL_ROOT.parent]      # the whole skills repo
+    # Auto-detect the workspace. PIPELINE.md and DRAFTING_STANDARD.md live in the
+    # skill but address the WORKSPACE: their citations ("Emory/", "synthesis/...",
+    # "_application_evidence/...") are relative to Job Search, because that is where
+    # an agent stands when it reads them. Without the workspace root, ~200 correct
+    # citations read as dead. JOB_SEARCH_ROOT overrides; the mnt/ guess is the
+    # Cowork sandbox, where $HOME is the session, not the Mac home.
+    guesses = []
+    if args.root:
+        guesses = []                          # explicit roots: guess nothing
+    elif os.environ.get("JOB_SEARCH_ROOT"):
+        guesses.append(Path(os.environ["JOB_SEARCH_ROOT"]).expanduser())
+    if not args.root:
+        guesses += [Path.home() / "Documents/Filing/Job Search",
+                    Path.home() / "mnt/Job Search"]
+    for guess in guesses:
+        g = guess.resolve() if guess.exists() else guess
+        if g.exists() and g not in roots:
+            roots.append(g)
+            break
 
     if not args.quiet:
         print("check_wiring")
@@ -223,9 +295,27 @@ def main() -> int:
             print(f"  root: {r}{'' if r.exists() else '   (absent)'}")
         print()
 
-    build_basename_index(roots)
+    # REFERENCE ROOTS are read for resolution but never scanned for their own
+    # citations. The Rustin grants-research fork is a separate project with its own
+    # owner, but printpress cites into it by design (SKILL.md quotes its
+    # williams-cutting.md guards). Without this, a correct citation reads as dead;
+    # with it scanned as a normal root, this check would start policing someone
+    # else's documents.
+    ref_roots = []
+    for guess in () if args.root else (Path.home() / "Documents/Filing/Consulting/Rustin Institute/rustin-tools/grants-research",
+                  Path.home() / "mnt/grants-research"):
+        if guess.exists():
+            ref_roots.append(guess.resolve())
+            break
+    if not args.quiet and ref_roots:
+        for r in ref_roots:
+            print(f"  reference root (resolve only): {r}")
+        print()
 
-    dead, forked, absolute, anchors, unverifiable = [], [], [], [], []
+    all_roots = roots + ref_roots
+    build_basename_index(all_roots)
+
+    dead, dead_archive, forked, absolute, anchors, unverifiable = [], [], [], [], [], []
     basenames: dict[str, list[Path]] = defaultdict(list)
 
     for root, doc in iter_docs(scan_dirs(roots)):
@@ -237,15 +327,54 @@ def main() -> int:
             for tok in BACKTICKED.findall(line):
                 if not is_pathlike(tok):
                     continue
-                verdict = resolve(tok, doc, roots)
+                verdict = resolve(tok, doc, all_roots)
+                # A citation the prose itself hedges is not a broken link. When a
+                # genre config says `Spencer/` "(when one exists)", or CLAUDE.md says
+                # navigate `graphify-out/wiki/index.md` "if it exists", the author has
+                # already said the target is optional. Flagging it teaches the reader
+                # to ignore the report.
+                if verdict == "dead" and CONDITIONAL.search(line):
+                    verdict = "conditional"
                 if verdict == "dead":
-                    dead.append((doc, i, tok))
+                    (dead if is_active(doc) else dead_archive).append((doc, i, tok))
                 elif verdict == "unverifiable":
                     unverifiable.append((doc, i, tok))
             for m in LINE_ANCHOR.finditer(line):
                 anchors.append((doc, i, m.group(0).strip("`")))
             if ABS_HOME.search(line):
                 absolute.append((doc, i))
+
+    # ------------------------------------------------------------------
+    # Reclassify citations to repositories that simply are not mounted.
+    #
+    # PIPELINE.md cites `/Users/june/Documents/GitHub/profile/JUNE_BLOCH_AGENT_BRIEFING.md`
+    # in one place and the bare `JUNE_BLOCH_AGENT_BRIEFING.md` in another. The first is
+    # correctly called unverifiable — it is outside every mounted root, so this checker
+    # cannot see it. The second was called DEAD, which is a different and false claim:
+    # it says the file is gone when it is merely elsewhere. Absence of evidence, not
+    # evidence of absence.
+    #
+    # So: any name already seen as unverifiable teaches the checker that the name lives
+    # outside. A bare citation of that same name is unverifiable too. The map builds
+    # itself from the documents, so nothing has to be maintained by hand.
+    # ------------------------------------------------------------------
+    external_names = set()
+    for _, _, tok in unverifiable:
+        parts = [x for x in tok.strip("/").split("/") if x]
+        if parts:
+            external_names.add(parts[-1])
+            for part in parts:
+                if part not in ("Users", "june", "Documents", "GitHub", "Filing"):
+                    external_names.add(part)
+    still_dead = []
+    for entry in dead:
+        tok = entry[2]
+        parts = [x for x in tok.strip("/").split("/") if x]
+        if parts and (parts[-1] in external_names or parts[0] in external_names):
+            unverifiable.append(entry)
+        else:
+            still_dead.append(entry)
+    dead = still_dead
 
     # Forked duplicates: only across CANONICAL locations. Per-application artifacts
     # (APPLICATION_CHECKLIST.md in eleven app folders) are supposed to differ — that
@@ -283,6 +412,8 @@ def main() -> int:
             forked.append((name, hashes))
 
     def show(title, items, fmt, cap=25):
+        if args.full:
+            cap = len(items)
         if not items:
             return
         print(f"\n{title} ({len(items)})")
@@ -291,7 +422,9 @@ def main() -> int:
         if len(items) > cap:
             print(f"  … and {len(items) - cap} more")
 
-    show("DEAD REFERENCES — cited path does not exist", dead,
+    show("DEAD REFERENCES in the active workflow — an agent following these lands nowhere", dead,
+         lambda t: f"{t[0].name}:{t[1]}  ->  {t[2]}")
+    show("ROT in archived documents — records of where things were; not a failure", dead_archive,
          lambda t: f"{t[0].name}:{t[1]}  ->  {t[2]}")
 
     if forked:
@@ -311,11 +444,11 @@ def main() -> int:
              lambda t: f"{t[0].name}:{t[1]}  ->  {t[2]}", cap=15)
 
     print()
-    print(f"summary: {len(dead)} dead · {len(forked)} forked · "
-          f"{len(absolute)} absolute-path lines · {len(anchors)} line anchors · "
-          f"{len(unverifiable)} unverifiable")
+    print(f"summary: {len(dead)} dead in active workflow · {len(forked)} forked · "
+          f"{len(dead_archive)} archived rot · {len(absolute)} absolute-path lines · "
+          f"{len(anchors)} line anchors · {len(unverifiable)} unverifiable")
     if dead or forked:
-        print("FAIL — dead references and forked duplicates must be zero.")
+        print("FAIL — dead references in the active workflow, and forked duplicates, must be zero.")
         return 1
     print("OK")
     return 0

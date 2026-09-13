@@ -19,7 +19,7 @@ set -euo pipefail
 
 REPO="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
 source "${REPO}/skills_common.sh"
-SKILLS="${HOME}/.claude/skills"
+SKILLS="${SKILLS_DIR:-${HOME}/.claude/skills}"   # SKILLS_DIR override exists so these scripts can be tested against a fixture
 APPLY=0
 NAMES=()
 

@@ -137,3 +137,97 @@ def test_absolute_paths_warn_but_do_not_fail(tmp_path: Path) -> None:
     r = run(tmp_path)
     assert r.returncode == 0, r.stdout          # warning only
     assert "absolute-path lines" in r.stdout
+
+
+# ---------------------------------------------------------------------------
+# Signal-to-noise. On 2026-09-13 this check reported 202 dead references against
+# the real tree. Four were real. A gate that cries wolf 198 times is one nobody
+# reads, so each class of false alarm below is now pinned by a test.
+# ---------------------------------------------------------------------------
+
+def test_filename_templates_are_not_dead(tmp_path: Path) -> None:
+    """`triage_results_YYYY-MM-DD.md` names an output that is SUPPOSED not to
+    exist yet. It is an instruction, not an address."""
+    pp = make_skill(tmp_path)
+    (pp / "PIPELINE.md").write_text(
+        "Save the run as `triage_results_YYYY-MM-DD.md` and "
+        "`job_search_results_linkedin_YYYY-MM-DD.json`.\n"
+    )
+    r = run(tmp_path)
+    assert r.returncode == 0, r.stdout
+    assert "YYYY" not in r.stdout
+
+
+def test_elided_paths_are_not_dead(tmp_path: Path) -> None:
+    """An abbreviated path was written to be readable. It cannot be resolved even
+    in principle, so calling it dead asserts something the checker cannot know."""
+    pp = make_skill(tmp_path)
+    (pp / "PIPELINE.md").write_text(
+        "See `.../Internal Docs/GRANT_LANDSCAPE.md` and "
+        "`critic-swarm/…/ats-compatibility.md`.\n"
+    )
+    r = run(tmp_path)
+    assert r.returncode == 0, r.stdout
+
+
+def test_schemeless_urls_are_not_paths(tmp_path: Path) -> None:
+    """`linkedin.com/in/` and `nexus.od.nih.gov/all/category/blog/` are addresses
+    on the web, not on the disk."""
+    pp = make_skill(tmp_path)
+    (pp / "PIPELINE.md").write_text(
+        "Use `linkedin.com/in/` not the bare handle. Background: "
+        "`nexus.od.nih.gov/all/category/blog/open-mike/`.\n"
+    )
+    r = run(tmp_path)
+    assert r.returncode == 0, r.stdout
+
+
+def test_conditional_citations_are_not_dead(tmp_path: Path) -> None:
+    """When the prose says the target is optional, a missing target is the
+    documented case, not a defect."""
+    pp = make_skill(tmp_path)
+    (pp / "genre_configs" / "grant_fellowship.md").write_text(
+        "- Spencer / education humanities → `Spencer/` (when one exists)\n"
+        "Navigate `graphify-out/wiki/index.md` if it exists rather than raw files.\n"
+    )
+    r = run(tmp_path)
+    assert r.returncode == 0, r.stdout
+
+
+def test_unhedged_version_of_the_same_citation_still_fails(tmp_path: Path) -> None:
+    """The hedge must be doing the work — not the filename shape."""
+    pp = make_skill(tmp_path)
+    (pp / "genre_configs" / "grant_fellowship.md").write_text(
+        "Read `graphify-out/wiki/index.md` before answering.\n"
+    )
+    r = run(tmp_path)
+    assert r.returncode == 1, r.stdout
+    assert "graphify-out" in r.stdout
+
+
+def test_rot_in_an_archived_document_does_not_fail_the_build(tmp_path: Path) -> None:
+    """An August handoff citing a path that has since moved is a record of where
+    the file was, not a broken workflow."""
+    pp = make_skill(tmp_path)
+    (pp / "HANDOFF_2026-08-09.md").write_text("Then read `moves/williams-cutting.md`.\n")
+    r = run(tmp_path)
+    assert r.returncode == 0, r.stdout
+    assert "ROT in archived documents" in r.stdout
+
+
+def test_the_same_dead_reference_in_the_active_workflow_does_fail(tmp_path: Path) -> None:
+    """Same citation, same missing file — but SKILL.md is followed mid-draft."""
+    pp = make_skill(tmp_path)
+    (pp / "SKILL.md").write_text("# skill\nThen read `moves/williams-cutting.md`.\n")
+    r = run(tmp_path)
+    assert r.returncode == 1, r.stdout
+    assert "DEAD REFERENCES in the active workflow" in r.stdout
+
+
+def test_explicit_roots_are_hermetic(tmp_path: Path) -> None:
+    """--root means 'exactly these'. It used to mean 'these as well', which pulled
+    the real workspace into every fixture and made the suite meaningless."""
+    make_skill(tmp_path)
+    r = run(tmp_path)
+    assert str(Path.home() / "Documents") not in r.stdout
+    assert "Job Search" not in r.stdout
