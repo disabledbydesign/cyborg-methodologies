@@ -1,6 +1,197 @@
 {
   "runs": [
     {
+      "timestamp": "2026-05-06T23:26:33",
+      "command": "--learn",
+      "files": [
+        "COVER_LETTER_draft_v2.md",
+        "COVER_LETTER_final.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-05-06T23:28:11",
+      "command": "--learn-sequence --dry-run",
+      "files": [
+        "COVER_LETTER_v1.md",
+        "COVER_LETTER_v2.md",
+        "COVER_LETTER_v3.md",
+        "COVER_LETTER_v4.md",
+        "COVER_LETTER_v5.md",
+        "COVER_LETTER_v6.md",
+        "COVER_LETTER_v7.md",
+        "COVER_LETTER_v8.md",
+        "COVER_LETTER_v9.md",
+        "COVER_LETTER_v10.md",
+        "COVER_LETTER_v11.md",
+        "COVER_LETTER_v12.md",
+        "COVER_LETTER_v13.md",
+        "COVER_LETTER_v14.md",
+        "COVER_LETTER_v15.md",
+        "COVER_LETTER_v16.md",
+        "COVER_LETTER_v17.md",
+        "COVER_LETTER_v18.md",
+        "COVER_LETTER_v19.md",
+        "COVER_LETTER_v20.md",
+        "COVER_LETTER_v21.md",
+        "COVER_LETTER_v22.md",
+        "COVER_LETTER_v23.md",
+        "COVER_LETTER_v24.md"
+      ],
+      "cited_check_ids": [
+        "bookend_opening_frame",
+        "no_announcement_fragments",
+        "transitivity"
+      ]
+    },
+    {
+      "timestamp": "2026-05-08T16:37:48",
+      "command": "--learn-sequence --dry-run",
+      "files": [
+        "RESEARCH_PROPOSAL_v1.md",
+        "RESEARCH_PROPOSAL_v2.md",
+        "RESEARCH_PROPOSAL_v3.md",
+        "RESEARCH_PROPOSAL_v4.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-05-08T16:38:34",
+      "command": "--learn",
+      "files": [
+        "RESEARCH_PROPOSAL_v2.md",
+        "RESEARCH_PROPOSAL_v3.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-05-08T16:38:34",
+      "command": "--learn-sequence",
+      "files": [
+        "RESEARCH_PROPOSAL_v1.md",
+        "RESEARCH_PROPOSAL_v2.md",
+        "RESEARCH_PROPOSAL_v3.md",
+        "RESEARCH_PROPOSAL_v4.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-05-08T16:40:19",
+      "command": "--learn-sequence",
+      "files": [
+        "COVER_LETTER_v1.md",
+        "COVER_LETTER_v2.md",
+        "COVER_LETTER_v3.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-12T20:38:54",
+      "command": "--learn-sequence --dry-run",
+      "files": [
+        "cover_letter.md",
+        "cover_letter_v2.md",
+        "cover_letter_v3.md",
+        "cover_letter_v4.md",
+        "cover_letter_v5.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-12T20:39:20",
+      "command": "--learn-sequence --dry-run",
+      "files": [
+        "teaching_statement.md",
+        "teaching_statement_v2.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-12T20:39:54",
+      "command": "--learn",
+      "files": [
+        "cover_letter_v2.md",
+        "cover_letter_v3.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-12T20:40:00",
+      "command": "--learn",
+      "files": [
+        "cover_letter_v3.md",
+        "cover_letter_v4.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-12T20:40:00",
+      "command": "--learn-sequence",
+      "files": [
+        "cover_letter.md",
+        "cover_letter_v2.md",
+        "cover_letter_v3.md",
+        "cover_letter_v4.md",
+        "cover_letter_v5.md"
+      ],
+      "cited_check_ids": [
+        "audience_language_echo",
+        "behavior_not_metrics",
+        "constructivist_epistemology",
+        "context_before_claim",
+        "modality",
+        "referential_strategy",
+        "restraint_under_density",
+        "topic_sentence_craft",
+        "transitivity"
+      ]
+    },
+    {
+      "timestamp": "2026-06-13T10:47:33",
+      "command": "--learn-sequence --dry-run",
+      "files": [
+        "Oxford_Project_Statement_v1.md",
+        "Oxford_Project_Statement_PRE-COMPRESSION_2026-06-11.md",
+        "Oxford_Project_Statement_v3.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-13T10:48:15",
+      "command": "--learn",
+      "files": [
+        "Oxford_Motivation_Letter_v1.md",
+        "Oxford_Motivation_Letter_v2.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-13T10:50:28",
+      "command": "--learn",
+      "files": [
+        "DRAFT_CL_v1_lean.md",
+        "DRAFT_CL_v2_final.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-06-13T10:51:45",
+      "command": "--learn",
+      "files": [
+        "DRAFT_CL_v1_lean.md",
+        "DRAFT_CL_v2_final.md"
+      ],
+      "cited_check_ids": [
+        "argumentation_topoi",
+        "audience_language_echo",
+        "behavior_not_metrics",
+        "constructivist_epistemology",
+        "referential_strategy",
+        "specificity_grounds_theory",
+        "upward_outward_synthesis"
+      ]
+    },
+    {
       "timestamp": "2026-07-05T17:17:04",
       "command": "--learn",
       "files": [
@@ -181,7 +372,7 @@
       "cited_check_ids": []
     },
     {
-      "timestamp": "2026-07-05T18:42:23",
+      "timestamp": "2026-07-05T18:42:28",
       "command": "--learn",
       "files": [
         "first_draft.md",
@@ -190,11 +381,20 @@
       "cited_check_ids": []
     },
     {
-      "timestamp": "2026-07-05T18:42:28",
+      "timestamp": "2026-08-11T11:05:26",
       "command": "--learn",
       "files": [
-        "first_draft.md",
-        "final_draft.md"
+        "CL_v11.md",
+        "CL_v12.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-08-11T11:05:29",
+      "command": "--learn-sequence --dry-run",
+      "files": [
+        "CL_v11.md",
+        "CL_v12.md"
       ],
       "cited_check_ids": []
     }
