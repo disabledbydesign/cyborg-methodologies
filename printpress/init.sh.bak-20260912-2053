@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# /printpress init script
+#
+# Sets up the directory structure the skill needs at runtime.
+# Idempotent — safe to re-run. Won't overwrite existing files, won't break existing symlinks.
+#
+# Per SPEC.md § "What's NOT in this spec yet" — "Genre config init: genre_configs/ and other_log.md need to exist before first invocation. An install/init step is needed."
+#
+# What this creates:
+#   ~/.claude/skills/printpress/                  — skill home
+#   ~/.claude/skills/printpress/profiles/         — author profiles (gitignored; for local data)
+#   ~/.claude/skills/printpress/genre_configs/    — symlink to repo's genre_configs/
+#   ~/.claude/skills/printpress/other_log.md      — accumulation log for `other` genre uses
+#   ~/.claude/skills/printpress/principles.md     — symlink to repo's principles.md (skill-wide learnings)
+
+set -euo pipefail
+
+# Resolve the repo directory this script lives in
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+SKILL_HOME="${HOME}/.claude/skills/printpress"
+
+echo "/printpress init"
+echo "  repo:       ${SCRIPT_DIR}"
+echo "  skill home: ${SKILL_HOME}"
+echo
+
+# 1. Skill home
+mkdir -p "${SKILL_HOME}"
+echo "[ok] ${SKILL_HOME}"
+
+# 2. Profiles directory (local data, gitignored)
+if [ ! -d "${SKILL_HOME}/profiles" ]; then
+  mkdir -p "${SKILL_HOME}/profiles"
+  # gitignore so any future git init in skill home doesn't track personal profiles
+  cat > "${SKILL_HOME}/profiles/.gitignore" <<'EOF'
+# Author profiles contain personal data — never commit.
+*
+!.gitignore
+EOF
+  echo "[ok] ${SKILL_HOME}/profiles/ (with .gitignore)"
+else
+  echo "[skip] ${SKILL_HOME}/profiles/ already exists"
+fi
+
+# 3. genre_configs/ symlinked from repo
+GC_TARGET="${SCRIPT_DIR}/genre_configs"
+GC_LINK="${SKILL_HOME}/genre_configs"
+if [ ! -e "${GC_LINK}" ]; then
+  if [ ! -d "${GC_TARGET}" ]; then
+    mkdir -p "${GC_TARGET}"
+    echo "[create] ${GC_TARGET}"
+  fi
+  ln -s "${GC_TARGET}" "${GC_LINK}"
+  echo "[ok] symlink ${GC_LINK} -> ${GC_TARGET}"
+elif [ -L "${GC_LINK}" ]; then
+  EXISTING_TARGET="$(readlink "${GC_LINK}")"
+  if [ "${EXISTING_TARGET}" = "${GC_TARGET}" ]; then
+    echo "[skip] symlink ${GC_LINK} already points to ${GC_TARGET}"
+  else
+    echo "[warn] ${GC_LINK} is a symlink to ${EXISTING_TARGET}, not ${GC_TARGET}"
+    echo "       leaving as-is; remove manually if you want to re-link"
+  fi
+else
+  echo "[warn] ${GC_LINK} exists and is not a symlink; leaving as-is"
+fi
+
+# 4. principles.md symlinked from repo (skill-wide learning loop output)
+PR_TARGET="${SCRIPT_DIR}/principles.md"
+PR_LINK="${SKILL_HOME}/principles.md"
+if [ ! -e "${PR_LINK}" ]; then
+  if [ -f "${PR_TARGET}" ]; then
+    ln -s "${PR_TARGET}" "${PR_LINK}"
+    echo "[ok] symlink ${PR_LINK} -> ${PR_TARGET}"
+  else
+    echo "[warn] ${PR_TARGET} not found; skipping principles.md symlink"
+  fi
+elif [ -L "${PR_LINK}" ]; then
+  echo "[skip] ${PR_LINK} already linked"
+else
+  echo "[warn] ${PR_LINK} exists and is not a symlink; leaving as-is"
+fi
+
+# 5. other_log.md stub (per SPEC § Learning loops Tier 2)
+OTHER_LOG="${SKILL_HOME}/other_log.md"
+if [ ! -f "${OTHER_LOG}" ]; then
+  cat > "${OTHER_LOG}" <<'EOF'
+# /printpress — `other` genre accumulation log
+
+<!--
+Implements SPEC.md § Learning loops, Tier 2: "'Other' genre accumulation."
+
+Each invocation of /printpress that selects (or asks-and-resolves-to) the `other` genre logs an entry here. The skill reads this file at Stage 0 on every `other` invocation; if this is the 3rd-or-later `other` use, the skill surfaces the genre-promotion proposal at Stage 0 before proceeding.
+
+The log is the input the skill needs to ask: "You've used 'other' N times. These uses look like [description] — should we add this as a genre?" If the author and agent design a new genre config together, the relevant entries get the corresponding genre tag added retrospectively (so future readers can trace which uses motivated which genre).
+-->
+
+## Entries
+
+<!--
+Format per entry:
+
+### [Date] — [Document type / project name]
+
+- **Who reads this?** [the answer the author gave at Stage 1]
+- **Source material:** [what was in Stage 0]
+- **Swarm composition used:** [persona stack — the always-runs + whatever Stage 1 surfaced]
+- **What worked / didn't:** [brief note from LEARNING_LOG.md if available]
+- **Promoted to genre:** [genre name if this entry's pattern was later promoted, or "—"]
+
+---
+-->
+
+*(No `other` invocations logged yet.)*
+EOF
+  echo "[ok] ${OTHER_LOG}"
+else
+  echo "[skip] ${OTHER_LOG} already exists"
+fi
+
+echo
+echo "init complete."

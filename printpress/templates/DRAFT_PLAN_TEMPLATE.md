@@ -1,0 +1,347 @@
+# DRAFT_PLAN — [Application / Project Name]
+
+<!--
+This template implements SPEC.md § Stage 1 — "Pre-draft cyborg conversation."
+It is the residue of the four-move conversation, not a directive for drafting.
+If the author later reads this, they should recognize their own thinking — not see a plan they're being asked to approve.
+
+The skill copies this template into the working directory at the END of Stage 1, then fills it in collaboratively with the author. Do NOT pre-fill from agent inference; fill from what the conversation actually surfaced.
+
+Field design carries analytical orientation (cgt-skill principle): the "Conversation notes / what happened" field at the end activates conversation-as-work register. Do not remove it.
+-->
+
+---
+
+**Genre:** [`academic_position` / `grant_fellowship` / `non_academic_application` / `peer_review` / `other`]
+**Document(s) covered:** [single doc, or — for multi-doc applications — the cover-letter braid plus which other docs reference back]
+**Date:** [YYYY-MM-DD]
+
+## Position and fit
+
+**Position:** [Title, institution/org]
+**Track:** [academic / fellowship / tech / grant / EdTech / nonprofit / AI welfare / …]
+**Deadline:** [date — note if rolling]
+**Fit verdict** (Step 1): [Strong / Decent / Weak — one sentence of rationale]
+
+---
+
+## Drafting scope and requirement owners
+
+<!--
+Copy the requirements ledger's ownership decisions here only far enough to prevent scope drift.
+`DRAFT` means printpress produces or revises the substantive prose. `AUTHOR-HANDLED` is tracked for compliance but is not a drafting target. `PORTAL` is entered directly in the application form.
+Reference lists are always AUTHOR-HANDLED, and academic CVs default to AUTHOR-HANDLED. A resume enters DRAFT when the role requires one unless the author explicitly takes it over.
+-->
+
+| Requirement | Owner | Workflow implication |
+|---|---|---|
+| [Narrative document / field] | DRAFT | [plan and draft here] |
+| [CV / references / other author-owned item] | AUTHOR-HANDLED | [track only; do not draft] |
+| [Portal field] | PORTAL | [capture requirement; do not turn into a document] |
+
+<!-- Genre is what the rest of the skill keys off of — persona stack, voice-check tag, source-doc requirements. -->
+
+---
+
+## Ordered propositions
+
+<!--
+⚠ THIS SECTION COMES BEFORE THE ARC, AND IT IS THE ONE THAT CANNOT BE SKIPPED.
+
+`DRAFTING_STANDARD.md` `ARG-2`: "Every paragraph carries exactly one stated proposition
+from the propositions list. Prose carrying none is cut. An 'arc' or a list of 'section
+beats' is not an argument; only claims that could be false are."
+
+This section exists because /printpress once produced six drafts on one application, each
+drawing the same core critiques, until the author stopped the process. The diagnosis
+(WORKFLOW_v1_propositions.md, 2026-08-11): the planning artifacts were shapes and topics,
+never claims, so an instance could complete every stage having written nothing that could
+be true or false — which leaves every sentence to be optimized toward the statistical
+centre of "cover letter sentence," and invents facts whenever a slot needs a claim.
+
+Rules, learned on first use:
+- Each proposition must be a sentence that COULD BE FALSE. "She has good judgment" is not
+  one unless tied to a specific posting duty.
+- A proposition about the EMPLOYER's internal practice ("this is the method they need and
+  lack") is unsupportable — neither author nor reader can verify it. State the finding,
+  not a claim about their gap.
+- Order them so a reader who accepts all of them concludes: interview this person.
+- Every later paragraph maps to exactly one proposition. Prose carrying none is cut.
+
+`AUD-5a` — proportion is set HERE, not in the prose: proposition count per duty determines
+paragraph count per duty determines word count per duty. **Before drafting, count the
+propositions against the posting's duty clusters.** If the heaviest duty has the fewest
+propositions, the plan is already wrong and the draft cannot recover. The two fixes, in
+order of preference: split the under-served duty into more than one proposition (it usually
+contains more than one claim), or consolidate over-served ones.
+
+SHOW THESE TO THE AUTHOR BEFORE ANY PROSE EXISTS. Five lines take under a minute to read,
+and a wrong argument caught here costs nothing.
+-->
+
+| # | Proposition (a sentence that could be false) | Posting duty it serves | Grounding (source path) |
+|---|---|---|---|
+| 1 | [claim] | [duty cluster] | [where the evidence lives] |
+| 2 | [claim] | [duty cluster] | [...] |
+| 3 | [claim] | [duty cluster] | [...] |
+
+**Duty-count check (`AUD-5a`):** [duty A — n propositions · duty B — n · duty C — n].
+Heaviest duty in the posting: [which]. Does it have the most propositions? [yes / no — if
+no, fix the plan here, not in the draft.]
+
+**Author's yes:** [the author has seen and approved these — record the date. Drafting does
+not start without it.]
+
+---
+
+## Arc
+
+<!--
+The structure carrying the story for THIS document, under the formal parameters and genre conventions surfaced in Move 3.
+Not "what topics it covers" — the ORDER AND MOVEMENT of the propositions above. The arc is how the argument unfolds; the propositions are the argument. If this section could stand without the propositions section, one of the two is wrong. 2–3 paragraphs is usually enough.
+For multi-doc applications, the arc applies to the lead document (usually the CL); other docs carry their own arcs but reference this one.
+The arc is the thing the author redirected the agent toward in Move 3. If the agent's first proposal survived intact, that's a flag — the redirect is where the work happened.
+-->
+
+[The agreed arc.]
+
+---
+
+## Openings and takings-up
+
+<!--
+Move 1 produced 2–4 candidate framings — what the author's work opens up for this reader, what threads it picks up. Move 2 was the author taking up one (or naming a different one entirely).
+Capture all the candidates, not just the winner. The ones not taken up are part of the record — they show what was considered and why this one was right.
+Per SPEC: "openings and takings-up" is from cgt-skill memo 016. Asking what a framing "opens up for the reader" produces opening-shaped output; asking "does this match the posting" produces match-shaped output. The candidates here should be opening-shaped.
+-->
+
+**Candidates surfaced (Move 1):**
+1. [framing] — opens: [what it makes possible for this reader/venue]; picks up: [thread from their work — relational tracing, not feature-matching]
+2. [framing] — opens: [...]; picks up: [...]
+3. [framing] — opens: [...]; picks up: [...]
+
+**Taken up (Move 2):** [the framing the author named — may be one of the above, may be a different one entirely. If the author named something new, capture what they said in their own words; the agent's reflect-back is residue, not the source.]
+
+**Why:** [what made this one right — usually a sentence or two from the conversation. Not the agent's gloss.]
+
+---
+
+## Tailoring anchors (required for policy / research / mission-driven orgs)
+
+<!--
+The specificity test: if the draft could be sent to three different organizations in the
+same space with minimal edits, it is not tailored. These three outputs force it to be about
+THIS one. Merged up from the Job Search fork of this template, 2026-09-12.
+
+The peer-swap test (from the Rustin extraction, and the sharper form of the same idea):
+would the same paragraph work for a peer organization after swapping the names? If yes,
+the tracing is still generic. Note this swaps the READER, where the anti-generic test swaps
+the applicant — both directions are worth running.
+-->
+
+**Their vocabulary** — 3–5 terms from the organization's own published writing that do not
+appear in the author's usual register. The draft uses these, not the author's coined
+substitutes.
+
+[Verbatim from their writing. e.g. AI Now: "extractive," "austerity tool," "used on us,"
+"corporate capture," "frontline expertise."]
+
+**Named publication + specific argument** — at least one piece, and the argument *in* it
+that connects. "Their work documents X" is not sufficient: name the piece, name the
+argument.
+
+[*Title* (year) — the specific argument that connects.]
+
+**The gap** — what does their critique open but not answer? Where is their affirmative
+vision underdeveloped, and how does this work fill it? The sharpest differentiating move,
+and the one most likely to be the strongest proposition above.
+
+[Not "we're aligned" — "you've named the problem; I've been building toward the answer."]
+
+**Peer-swap check:** [swap their name for a peer organization's. Does the paragraph still
+work? If yes, go back.]
+
+---
+
+## The question they haven't asked — and what June contributes to it
+
+*Renamed 2026-08-09 from "Hakope's Question reframe." Additive, not corrective: surface the question this reader hasn't reached, then say what June would bring to it. See PIPELINE.md Step 3.*
+
+<!--
+Where applicable (academic_position, grant_fellowship, sometimes non_academic_application).
+Per PIPELINE.md Step 3 / SPEC.md Stage 4.5: what framework is this field/institution treating as given, and how does the author's work reveal that the framework itself is the problem?
+For genres where the question-they-haven't-asked move doesn't apply (e.g., some peer_review, some other), write "N/A — [why]" and move on.
+-->
+
+[The specific framework-reframe for THIS document. One paragraph.]
+
+---
+
+## Claim bridge / reasoning basis (when needed)
+
+<!--
+Optional. Use when the document synthesizes several bodies of work, makes an interpretive identity claim, or proposes a new cross-domain program. FACT_INVENTORY verifies facts; this section records how the evidence warrants the claims. Do not add it merely to make a simple application look more systematic.
+-->
+
+| Proposed claim | Evidence that warrants it | Limits / distinctions to preserve | Status |
+|---|---|---|---|
+| [claim] | [specific evidence and source paths] | [what this does not establish] | [ready / author-directed / unresolved] |
+
+---
+
+## Identity architecture (when the record has several strands)
+
+<!--
+State the core identity as an argument, not a list. Then locate projects in relation to it. Similarity is not genealogy: distinguish a mature program, a methodological continuation, an independent present program, and an institutional expansion where those distinctions matter.
+-->
+
+- **Core identity:** [the shortest accurate statement of the research/teaching core]
+- **Established programs:** [what has already been demonstrated]
+- **Current extensions or methods:** [what continues the core and how]
+- **Independent present program(s):** [what should not be subordinated to an older project]
+- **Proposed institutional expansion:** [what becomes possible here, stated as a proposal]
+- **Comparisons that remain hypotheses:** [connections worth exploring but not claiming as fact]
+
+---
+
+## Project selection (when there are more credible programs than the packet can carry)
+
+<!--
+Content abundance supplies scenes and evidence for the long assembly. Program abundance is different: it requires a strategic choice before drafting. Do not send every plausible future into the assembly and expect prose cutting to invent a coherent research program.
+-->
+
+| Candidate program / strand | Packet role | Why selected or excluded |
+|---|---|---|
+| [strand] | [primary / secondary / longer horizon / exclude] | [reason] |
+
+---
+
+## Section beats
+
+<!--
+Move 4. What each section carries + which scenes / numbers / sources / scholars cited doing work (not name-dropped) ground it. Pulled from Stage 0 fact assembly.
+"Doing work" means the scholar is applied to the specific case, not parenthetically cited to signal engagement. If a beat has no specific grounding, that's a flag — surface it before drafting starts.
+For multi-doc applications, beats are per-document; add a separate table per doc or mark the doc in column 1.
+-->
+
+| Section | What it carries | Load-bearing specifics |
+|---|---|---|
+| Opening | [the move it makes] | [scene / quote / number / name] |
+| [Section name] | [the move] | [grounding] |
+| [Section name] | [the move] | [grounding] |
+| Closing | [the move] | [grounding] |
+
+---
+
+## Allocation (multi-document only)
+
+<!--
+For applications requiring multiple documents (CL + RS + TS + ES, or proposal + budget narrative + bio, etc.).
+Per PIPELINE Step 1.5: where does each concept/story get its full treatment? Where is it referenced briefly?
+Skip this section for single-doc projects.
+-->
+
+| Concept / Story | Full treatment in | Brief reference in |
+|---|---|---|
+| [Concept] | [Doc] | [Other doc(s)] |
+
+---
+
+## Swarm composition
+
+<!--
+Settled in Stage 1, used by Stage 3.
+Per SPEC: "Stage 1 also settles swarm composition: the question 'who actually reads this?' is answered here, not in Stage 3."
+For application genres this is usually a small number of named persona types (e.g., search committee chair, junior faculty in dept, dean's office, ATS scanner). For peer_review the editor agent picks reviewers from the bibliography — record the panel here once selected.
+The intelligibility / jargon / author-informed reviewers always run; don't list them. List only what's stack-specific to this document.
+-->
+
+**Reader(s) this document actually addresses:**
+- [persona type] — [why they're in the stack — what they bring as a reader]
+- [persona type] — [...]
+
+**Always-runs (per /critic-swarm spec, no need to confirm):** intelligibility, jargon, author-informed (if profile exists)
+
+---
+
+## What's deliberately NOT included, and why
+
+<!--
+Equally important. Things the agent surfaced that the author redirected away from, threads that don't belong here even if they're true elsewhere, scenes the author named as "save for the [other doc / book chapter / future paper]."
+This list protects against the cram-everything failure mode (SPEC § Drafting principles: "Strategic, not exhaustive"). When voice-check or a critic later flags "did you consider X?", consult this list before adding — the omission may be deliberate.
+-->
+
+- [decision] — [why]
+- [decision] — [why]
+
+---
+
+## Open questions for the author
+
+<!--
+Things that need the author's judgment before drafting can start. Don't draft past these — ask, using the dialogic capability scaled appropriately (usually quick-scan, single question).
+If empty: leave the section but write "None — Stage 1 settled all open questions." That's data for the learning loop.
+-->
+
+- [question]
+
+---
+
+## Unresolved comments / source-retrieval queue
+
+<!--
+Extract comments from working documents here. A comment does not enter prose just because it exists. Resolve it, retrieve its source, or keep it out of the assembly.
+-->
+
+| Comment or question | Needed action / source | Disposition |
+|---|---|---|
+| [item] | [retrieve / decide / verify] | [open / resolved / exclude] |
+
+---
+
+## Assembly and selection experiment
+
+<!--
+The final limit is a real requirement. The assembly and handoff ratios are process hypotheses.
+The author sees the complete assembly and marks KEEP / DROP / UNSURE before any autonomous selection pass. Then choose an inspectable route: AI-proposed reversible cut with diff; author-led selection with local AI compression; or hybrid. Do not preselect a route here unless the author already has.
+-->
+
+- **Final target `T`:** [format limit / measured capacity / no fixed limit]
+- **Assembly size (informational):** [actual once drafted; provisional abundance budget if useful]
+- **Author selection-input artifact:** [ASSEMBLY_MARKS.md / packet ownership-and-redundancy map / equivalent]
+- **Selection-input depth:** [granular KEEP / DROP / UNSURE marking / explicit authorization for a reversible proposition-level multi-document merge after viewing the full assembly]
+- **Post-input route:** [TBD / AI-proposed reversible cut / author-led selection + local AI compression / hybrid / proposition-level packet synthesis]
+- **If proposition-level packet synthesis:** [confirm assemblies preserved; unmarked blocks remain UNSURE; source notes + standing-inclusion audit + genuine-loss list required]
+- **Handoff size (informational):** [actual once produced; ~1.2T is only a provisional experiment]
+- **What to record afterward:** [material restored, AI cuts rejected, author additions, final size, and any quality loss]
+
+---
+
+## Conversation notes / what happened
+
+<!--
+Stage 1 learning loop entry, per SPEC § Learning loops Tier 1.
+This is the field that distinguishes a dialogic-register artifact from a directive-register one. Keep it.
+
+Failure modes to watch for (from PIPELINE.md Step 3.8):
+- Approval-seeking framing — agent presented candidates as "is this OK?" rather than thinking together
+- Directive extraction without understanding-shift — the author said "draft from this" before the conversation actually shifted the agent's understanding
+
+The point of the field isn't a checklist; it's an honest snapshot of the conversation. If neither failure mode appeared and something just clicked, say that.
+-->
+
+**Did either failure mode appear?**
+- *Approval-seeking framing*: [yes/no — if yes, what happened and how did the conversation re-open]
+- *Directive extraction without understanding-shift*: [yes/no — if yes, what happened]
+
+**What shifted the agent's understanding?** [Name the specific moment in the conversation where the plan changed because of what the author said. If nothing shifted — if the agent's first surface was the right one — say so honestly. The next aggregate review uses this to refine Stage 1.]
+
+[the moment, in 1–3 sentences]
+
+**Counterfactual:** What would the first draft have looked like if Stage 1 had been skipped? Better, worse, same? Why?
+
+[1–2 sentences]
+
+**Cross-stack tag:** [genre-specific / potentially-generalizable]
+
+<!-- Per SPEC § Cross-genre generalization: tag whether what was learned here might apply across stacks. Wrong tags are fine — periodic review validates and promotes. -->

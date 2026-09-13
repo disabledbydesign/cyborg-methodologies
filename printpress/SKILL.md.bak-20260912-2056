@@ -1,0 +1,522 @@
+---
+name: printpress
+description: "Genre-parameterized drafting workflow. Owns the full cycle: data-in → pre-draft cyborg conversation → draft → reviewer swarm (via /critic-swarm) → revision → save + learning loop. Five genres: academic_position, non_academic_application, grant_fellowship, peer_review, other. Voice-check is integrated throughout (style guide pre-draft, contamination linter post-draft, learning loop after revision). For review-without-drafting, invoke /critic-swarm directly."
+version: 0.1
+spec: ~/Documents/GitHub/cyborg-methodologies/printpress/SPEC.md
+user_invocable: true
+trigger: |
+  Invoke when the user runs /printpress, asks to "draft a [cover letter / research statement / grant / fellowship application / paper]", or starts work in a folder containing POSTING.md / a CFP / a manuscript draft. Bare /printpress reads context and confirms genre; explicit /printpress [genre] skips inference. For review-only of an existing artifact (no drafting), use /critic-swarm instead.
+---
+
+# /printpress — Drafting Workflow Skill
+
+Full drafting pipeline. Genre-parameterized. The skill owns the cycle from data-in through save + learning loop. At Stage 3 it invokes `/critic-swarm` for adversarial review; revision and save remain inside /printpress.
+
+This file is the executable workflow. Design rationale lives in `~/Documents/GitHub/cyborg-methodologies/printpress/SPEC.md`. Genre-specific logic lives in `genre_configs/[genre].md`. Interaction patterns (what the skill says at each stage) live in `UX_STUB.md`.
+
+---
+
+## When to use
+
+Drafting any of:
+
+- `academic_position` — academic faculty job applications (TT, VAP, lectureship, postdoc-in-academic-dept, open-rank). Reviewer = search committee. v1 ready.
+- `grant_fellowship` — grants and fellowships with a review panel. v1 ready.
+- `non_academic_application` — industry, tech, nonprofit, govt, EdTech, EA orgs. Reviewer = hiring manager + ATS.
+- `peer_review` — journal articles, book chapters, manuscripts. ⚠️ Stage 1 not yet specified — do not run peer_review without a design conversation with the author (per SPEC § What's NOT in this spec yet).
+- `other` — unknown genre. Skill asks the author; logs to learning loop for possible promotion.
+
+**Standalone review (no drafting):** use `/critic-swarm` directly. /printpress is the drafting pipeline; /critic-swarm is the review-only door. See SPEC § Standalone review.
+
+---
+
+## Invocation
+
+**/printpress is the orchestrator. The pipeline is decomposable; mid-cycle entry is supported.** Bare invocation reads working directory state to detect WHERE in the pipeline the work is, not just WHICH genre. Don't assume "/printpress means start from Stage 0." Detect first.
+
+| Form | Behavior |
+|---|---|
+| `/printpress` | **State detection.** Read context (working dir, open files, recent conversation, existing artifacts). Determine: (a) which genre, (b) what stage the work is at. Confirm or offer continuation options. |
+| `/printpress [genre]` | Explicit genre. Skips genre inference but still does state detection within that genre. |
+| `/printpress draft [genre?]` | Force start from Stage 0. Use when the existing artifacts shouldn't drive the workflow (e.g., starting fresh on a new application). |
+| `/printpress revise [draft-path]` | Stage 4 only. Existing draft + (optional) prior critic-swarm synthesis → sequential workshopping. |
+| `/printpress qc [draft-path]` | Stage 4.5 only. Pre-save QC verification on a converged draft. |
+| `/printpress check` | Stage 4.6 only. Requirements Compliance Gate: re-fetch the live posting/form, diff against the captured ledger, verify materials meet every structured requirement. Runnable standalone at any point, not just at readiness. |
+| `/printpress save [draft-path]` | Stage 5 only. Mechanical cleanup, save final, append VERSION_LOG, voice-check learn pass. |
+
+### State detection (bare invocation)
+
+When invoked bare, **the skill reads the working directory and infers what stage the author is at** before assuming Stage 0:
+
+| Working directory contains | Likely stage | Default offer |
+|---|---|---|
+| Just a `POSTING.md` (or nothing yet) | Stage 0 | "Start a new draft for [inferred genre]?" |
+| `POSTING.md` + `DRAFT_PLAN.md`, no draft yet | Stage 2 (assembly) | "Draft the cold long-form assembly from the plan? (See Stage 2 assembly protocol.) Or revisit Stage 1?" |
+| Workshopped prose exists but no cold assembly saved | Stage 2 (assembly capture) | "The opening was workshopped warm — dispatch a cold subagent to capture the independent assembly before we go further? (Protects the learning loop.)" |
+| `*_ASSEMBLY_v0.md` present, no `ASSEMBLY_MARKS.md` | Stage 2 (author marking) | "Show the uncut assembly for keep / drop / unsure marking before any selection pass." |
+| `*_ASSEMBLY_v0.md` + `ASSEMBLY_MARKS.md` present, no handoff draft | Stage 2 (selection experiment) | "Choose an inspectable cutting route: AI-proposed cut with diff, author-led selection with local AI compression, or hybrid." |
+| `*_HANDOFF_v1.md` present, no `LEARNING_LOG.md` | Stage 3/4 | "Review the marked, post-selection handoff (critic-swarm or workshop)?" |
+| Draft file present, no `LEARNING_LOG.md` | Stage 3 (review) | "Run critic-swarm on this draft? Or jump to Stage 4 revision?" |
+| Draft + `LEARNING_LOG.md` (recent swarm output) | Stage 4 (revision) | "Workshop the synthesis flags? One at a time." |
+| `*_final.md` exists, no recent VERSION_LOG entry | Stage 5 (save) | "Run mechanical cleanup + save + voice-check learn?" |
+| Multiple drafts, mixed signals | Ambiguous | Ask the author what they want to do next. |
+
+**Examples:**
+- `/printpress` in a job application folder with just `POSTING.md` → infers `academic_position` from posting + Stage 0 → starts there.
+- `/printpress` in a folder with a v3 draft and recent swarm output → recognizes mid-revision → "Pick up Stage 4 workshopping where we left off?"
+- `/printpress grant_fellowship` from a folder with a finalized draft → state detection finds Stage 5 work pending → "Run save + voice-check learn?"
+- `/printpress draft` from anywhere → forces Stage 0 even if other artifacts exist (use sparingly).
+
+The orchestrator framing matters: /printpress conducts; voice-check, /critic-swarm, (eventually) /workshop do the work. Mid-cycle entry is the orchestrator picking up the baton wherever the author left it, not insisting on full-cycle execution.
+
+---
+
+## Required reading at invocation
+
+Read these BEFORE Stage 0 begins. They shape every downstream stage.
+
+0. **`/Users/june/Documents/Filing/Job Search/_application_evidence/DRAFTING_STANDARD.md`** — the process standard. ⚠ **Added to required reading 2026-08-16, and the reason is worth your attention.**
+
+   Until now **this skill named that file nowhere, and neither did any genre config, PIPELINE.md, or the working-directory CLAUDE.md.** Grep confirmed zero references to the filename and zero to any check ID. It holds every process rule this workspace has paid for — each one written after a specific application went wrong — and no drafting agent had ever been told it exists.
+
+   **What that cost, measured across three applications:** the largest category of author revision was not *the system lacked a rule* but **the rule existed and the draft violated it** — 34% of her edits. Not defiance; the checks were never delivered. The FAMSF run then reproduced three defects the standard already forbade, four days after an analysis identified all three.
+
+   **Do not read all 38 checks at once — that failure is itself recorded in the file's §0** (an instance read four of thirty-eight, then wrote a worse local copy of them). Read §0–§1 for scope tags, then only the checks live at your stage:
+
+   | Stage | Checks that bind here |
+   |---|---|
+   | 0 — Data-in | `ACC-1` `ACC-3` `ACC-5` `ACC-6` `AUD-1` `AUD-6` `PRO-4` — **`ACC-3` is a hard gate: no fact inventory with a NOT-AVAILABLE section, no drafting** |
+   | 1 — Cyborg conversation | `AUD-5a` `AUD-8` `PRO-6` `PRO-7` `PRO-11` — proportion and budget are set here, in the propositions, not later in the prose |
+   | 2 — Draft | `ACC-4` `ARG-1`–`ARG-7` `AUD-2`–`AUD-5` `AUD-7` `PRO-1` `PRO-2` `PRO-12` |
+   | 3 — Swarm | `PRO-5` `PRO-9` — **every flag gets a disposition in `FLAGS.md`; nothing advances with a blank row** |
+   | 4 — Revision | `PRO-3` `PRO-3a` `PRO-8` `PRO-9` `PRO-11` — run `check_rewrite_fidelity.py --strict` on **every** transition |
+   | 5 — Save | `PRO-9` `PRO-10` — undisposed flags block the save; amendments get applied, not proposed |
+
+   ⚠ **Run these in passes of no more than THREE judgment-dependent checks.** Several stages above list more than three; that is a menu, not a single pass. **Measured** (`_application_evidence/CHECK_TRIAGE.md`): an agent handed 38 judgment-dependent checks reads about four of them. Handing you twelve and expecting twelve is the same failure at smaller scale. `CHECK_TRIAGE.md` names the three highest-yield checks for any single pass, and — importantly — **which rows a linter already settles, so you don't spend judgment on what a regex decides.**
+
+   **And run the linter, because it exists and nobody knew.** Vale is installed and live: `vale --output=JSON "FILE"` from the Job Search directory runs 25 custom `JuneBloch.*` rules. See `_application_evidence/VALE_INTEGRATION.md`. It is also the only thing that makes `GATE-3` blockable, since a gate needs a check that returns the same answer every run. **`PRO-8` governs the output: an alert on text June wrote is a rule defect, not a prose defect.**
+
+   **Three of these fire against your own instincts, which is why they are listed first rather than trusted to surface:**
+   - **`PRO-11`** — the author sees the assembly *before* the cut. The compression stage is where the value dies and it is the only stage with no author in it.
+   - **`PRO-8`** — a lint or QC hit on text *the author wrote* is a rule defect, not a prose defect. Two tools have now been caught flagging her and passing the agent. Never silently apply a linter suggestion to her sentences.
+   - **`AUD-8`** — a plan may not license an exception to a rule the author wrote. If a plan claims one, that is a `[NEED:]` for her.
+
+1. **The active genre config** — `~/Documents/GitHub/cyborg-methodologies/printpress/genre_configs/[genre].md`. This is the authoritative workflow for the genre. Per SPEC § Workflow, genre configs absorb workflow logic that used to live in PIPELINE.md (fit eval, the question-they-haven't-asked move — renamed 2026-08-09 from "Hakope's Question", see PIPELINE.md Step 3 — allocation, audience calibration). ⚠ **Correction 2026-08-07: ATS was listed here as absorbed, and it is not.** `non_academic_application.md` references PIPELINE.md Step 4.4 by number in four places and contains no ATS instructions of its own; the check itself executes in the critic-swarm `ats-compatibility` persona at Stage 4/4.5. Anyone revising ATS behavior must edit the persona file and PIPELINE.md Step 4.4 — editing the genre config alone changes nothing. Read it in full — the skill below is the cross-genre frame; the config is what you actually execute.
+
+2. **`~/Documents/GitHub/cyborg-methodologies/INSIGHTS.md`** — entry **2026-04-29** (relational tracing vs. similarity clustering) and entry **2026-05-07** (swarm as design review method). Per SPEC § Stage 1 build requirement: a cold agent without these defaults to feature-matching. Stage 1 Move 1 and Stage 3 synthesis both depend on relational tracing — without the read, both collapse into similarity-clustering ("what's like what's already here"), which is the failure mode the skill exists to route against.
+
+2b. **`/Users/june/Documents/Filing/Job Search/PIPELINE.md` Step 3 — "Hakope's Question touchstone."** ⚠ Added to required reading 2026-08-09. This skill and all four genre configs invoke **"Hakope's Question"** by name — fifteen times across the system — and **none of them define it.** A cold agent hits a required workflow step it cannot execute. The definition lives only in PIPELINE Step 3: it is the move of revealing that a debate rests on a premise nobody examined, named for Hakope (Maker of Medicine), who responded to June's paper on Mississippian figures with "Well, did you ever consider that it isn't a bird?" — they were genderless moths, and the entire academic debate shared an unexamined premise. **Read Step 3 before executing any stage that invokes it.** That section also now carries an assessment of how the move holds up against the 2026-08 evidence sweeps, including the one framing constraint that changes its risk substantially: the same content is far less exposed positioned as *opening* a question than as *correcting* a field.
+
+3. **`~/Documents/GitHub/cyborg-methodologies/printpress/UX_STUB.md`** — interaction patterns at each stage (invocation phrasing, voice memo invitations, AskUserQuestion structures, synthesis output format, learning loop surfaces). Don't reproduce these inline; reference UX_STUB at each stage.
+
+4. **The working directory's `CLAUDE.md`** (and parent's, if no working-dir one exists) — per SPEC § Where the skill finds local files. This is how the universal skill finds local user data: where applications live, where source materials are kept, where prior versions are stored, where the author's briefing doc is. The skill does NOT maintain its own user-paths config; CLAUDE.md is the convention.
+
+5. **Optional but high-value when relevant:**
+   - `~/Documents/GitHub/cyborg-methodologies/cgt-skill/memos/006_conversation_is_the_analysis.md` and `016_openings_and_takings_up.md` — the dialogic principles behind Stage 1's four moves. Read if Stage 1 feels mechanical or you find yourself producing match-shaped output rather than opening-shaped output.
+   - The author profile at `~/.claude/skills/critic-swarm/profiles/[author].md`, if one exists — fed to /critic-swarm at Stage 3 for the author-informed reviewer.
+
+     ⚠ **Path corrected 2026-08-16.** This said `printpress/profiles/` in four places; that directory is **empty**. The live profile is `~/.claude/skills/critic-swarm/profiles/bloch.md`. An agent following the old path found nothing, concluded no profile existed, and silently skipped the author-informed reviewer — the one reviewer that checks a draft against June's actual record.
+
+---
+
+## Workflow
+
+The cross-stage flow. For genre-specific moves at each stage, read the genre config (required reading #1).
+
+### Stage 0 — Data-in
+
+Assemble what the pipeline needs before anything else runs.
+
+#### Stage 0 opens with requirements extraction — before fit eval, before drafting. HARD GATE.
+
+**You cannot proceed to Stage 1 without a complete Submission Requirements Ledger that has been surfaced to the author.** This is first and mandatory, cross-genre (not "only if the posting has prompts").
+
+*Why first and mandatory:* the recurring, expensive failure is discovering structured requirements **late** — after materials are nearly done (Oxford AFP: a milestones/budget/duration requirement added to the live posting after our POSTING.md was captured; ETS/Turnitin: closed before submission). Requirements hide in posting *prose* — a milestones clause, a budget line, a portal character cap, a required diversity statement, a references field — not just in clean Q1/Q2/Q3 forms. Capturing them last is how they get missed. The fix is upstream: capture them first, from the live source, and **show the author before any drafting**, so the author never discovers a structured requirement deep into the materials.
+
+- **0a. Capture the live source.** Fetch the live posting AND the actual submission form/portal — not just one. Portals carry fields the posting doesn't list; postings name requirements the portal doesn't enforce. Save `POSTING.md` (complete, unedited) with a **capture timestamp**. If a portal/form exists, record its fields (or note it requires login/can't be fetched).
+- **0b. Build the Submission Requirements Ledger** → `[AppFolder]/APPLICATION_STRUCTURE.md` (universal — every genre, every application). A **checklist, not prose**:
+  - Every required **document**, each with format, naming convention, page/word/character limit
+  - Every required **prompt / section / field** — verbatim — *including non-obvious requirements embedded in prose*: milestones, budget, duration, named statements (diversity, teaching, research), references, portfolio/links, demographic forms
+  - **Submission method** (email / portal / both), subject-line and filename conventions
+  - **Deadline + rolling-deadline flag**
+  - Anything the form asks that the uploaded docs don't, and vice versa
+- **0c. Classify scope before treating the ledger as a drafting input.** Every requirement receives one of three owners: `DRAFT` (printpress produces or revises substantive prose), `AUTHOR-HANDLED` (tracked for compliance but outside the workflow's drafting scope), or `PORTAL` (entered directly in a form). Reference lists are always `AUTHOR-HANDLED`. Academic CVs default to `AUTHOR-HANDLED`. A résumé enters `DRAFT` when the application requires one, unless the author explicitly takes it over. The recurring failure is both missing a required element and expanding the workflow into materials the author handles more efficiently.
+- **0d. The `DRAFT` rows are binding drafting inputs — they shape the draft, they do not just notify.**
+  - **Into Stage 1 allocation:** every `DRAFT` prompt / section / field / element becomes an explicit allocation row in `DRAFT_PLAN.md`. `AUTHOR-HANDLED` and `PORTAL` rows stay in the compliance ledger and do not become prose targets.
+  - **Into Stage 2 drafting:** the draft addresses every `DRAFT` ledger item, within its limit. If drafting is delegated to a subagent, those rows go in the subagent brief as **hard constraints** (required elements + limits), not as background context.
+  - The drafting instance owns draft↔requirement coverage end-to-end; Stage 4.6 only re-verifies it.
+  - **Also** surface the ledger to the author for awareness — but the mechanism that prevents the failure is the draft being built to the ledger, not the notification.
+
+Then assemble the source materials:
+
+- **Per genre:** the genre config names required files (POSTING.md, funder profile, COMPANY_PROFILE.md, source materials, etc.) and what to do if any are missing.
+- **File paths:** resolve via the file-finding protocol — working dir CLAUDE.md → parent CLAUDE.md → author profile → ask. SPEC § Where the skill finds local files.
+- **Track-specific prior-application lookup:** the genre config or working dir CLAUDE.md holds the closest-prior-match table. Pull from `*_final.md` or submitted artifact, not `v1.md`. Per voice-check protocol step 4 ("Pulling from prior similar work").
+- **Learning loop surfaces open here** (per SPEC § Learning loops Tier 2):
+  - If this is the 3rd–5th+ use of the genre since last review → surface a brief "Quick genre config update before proceeding? (5 min, can skip)" prompt. UX_STUB § Learning loop surfaces.
+  - If this is the 3rd+ use of `other` → surface the promotion question.
+  - Don't rely on the author to initiate; surface it yourself.
+- **For `peer_review` and `other`:** source material isn't retrievable without author input. Use the dialogic capability (see Cross-cutting capabilities below) — voice memo invitation is appropriate here. UX_STUB § Stage 0.
+
+#### Optional claim bridge — when verification is not enough
+
+`FACT_INVENTORY.md` is a verification and constraint ledger. It is not automatically a drafting substrate. When an artifact synthesizes several bodies of work, makes an interpretive identity claim, or proposes a new cross-domain program, create a bounded claim bridge before Stage 1. The bridge preserves:
+
+`rich evidence → interpretive move → narrow candidate claim → boundary → possible document use`
+
+Use `EVIDENCE_TO_CLAIMS.md` when that filename is useful; the function matters more than the name. Short or tightly constrained artifacts may skip the full file and record a one-sentence claim basis instead. Never replace the fact inventory with the bridge: one verifies; the other makes the reasoning inspectable.
+
+Before Stage 1, also extract unresolved working-document comments into a decision/source-retrieval queue. Preserve them, surface them in `DRAFT_PLAN.md`, and exclude them from draft prose until resolved.
+
+### Stage 1 — Pre-draft cyborg conversation: invoke `/workshop generate`
+
+**North star — state this before any Stage 1 work, cross-genre:**
+
+The goal of every application is for the reader to finish thinking "we can't afford not to hire her" — not stated, demonstrated implicitly. The mechanism is the mutual-opening approach (INSIGHTS.md 2026-04-29): identify what the hiring entity is opening and taking up in their work; identify what the author is opening and taking up in hers; find where those trajectories meet. The fit question should be unambiguous after reading.
+
+**Hard pre-draft gate (answer before Move 0):**
+1. What is this organization/funder reaching toward — what problems and threads define their current work?
+2. What is June reaching toward — what is she building toward, what threads is she pursuing?
+3. Where do those trajectories meet? Name the intersection in one or two sentences: not adjacent domains, but what becomes possible *at the meeting point* that wasn't possible from either trajectory alone.
+
+This gate is not satisfiable by restating the concept. "Both work on X" is similarity-clustering, not an intersection. If you can't name a real intersection, re-examine the fit verdict before proceeding. (Surfaced 2026-05-23 from AI Now draft failure — agent read INSIGHTS.md correctly but defaulted to feature-matching; the gate was missing as a hard stop.)
+
+---
+
+**/printpress does not own dialogic logic.** `/workshop` is the standalone skill that owns the four-move pattern, register protection, and conversation-as-the-analysis principles. /printpress's job at Stage 1 is to pass the right context.
+
+**Calling convention** (matches /workshop SKILL.md § Mode 1: `generate`):
+
+Invoke `/workshop generate` with:
+1. **Topic:** the active /printpress genre + the application/artifact being drafted.
+2. **Genre config path** — `~/.claude/skills/printpress/genre_configs/[genre].md`. The config supplies what each move opens for this genre (Move 1's framing candidates, Move 3's genre conventions vs. formal parameters, Move 4's section-beat structure, etc.).
+3. **Stage 0 context** — POSTING.md, FACT_INVENTORY.md, any claim bridge, DEPARTMENT_PROFILE.md / COMPANY_PROFILE.md / funder profile, INTELLECTUAL_CONNECTIONS.md, unresolved-comment queue, voice-final priors. /workshop reads these as the source material the conversation thinks with.
+4. **Output path:** `[ProjectFolder]/DRAFT_PLAN.md`, using `~/.claude/skills/printpress/templates/DRAFT_PLAN_TEMPLATE.md`.
+
+/workshop runs the four moves (parameterized for this genre), surfaces failure modes A (approval-seeking) and B (directive-extraction) when they appear, writes DRAFT_PLAN.md as residue of the conversation, and returns control to /printpress.
+
+**Stage 1 also settles swarm composition** — the question "who actually reads this?" is answered here, not at Stage 3. /workshop surfaces the question during Move 3 or 4; the answer goes in DRAFT_PLAN.md's swarm-composition section. If swarm composition isn't clear by the end of Stage 1, /workshop surfaces it explicitly before returning.
+
+For multi-track or research-program artifacts, Stage 1 also distinguishes: established core; current extension or method; independent present program where applicable; proposed institutional expansion; and candidate comparisons that remain hypotheses rather than identity claims. Program abundance is resolved here by selecting a bounded packet program from the candidate reservoir. It is not sent to Stage 2 as “more content” for a later cutting pass.
+
+The four moves themselves and their failure-mode taxonomy live in /workshop SKILL.md § Mode 1: `generate`. Don't reproduce the move detail here — read /workshop. Genre-specific framings for Moves 1, 3, 4 live in the genre config.
+
+### Stage 2 — Draft
+
+Execute DRAFT_PLAN.md. **Step 2 is execution, not re-planning.** If structural decisions arise that aren't in DRAFT_PLAN.md, surface them in conversation before deciding solo (use the dialogic capability, scaled appropriately — usually quick-scan).
+
+#### Stage 2 produces a v0 baseline FIRST — before any human prose-workshopping (cross-genre, load-bearing for the learning loop)
+
+**Why this exists.** The learning loop (Stage 5 / voice-check `--learn`) trains the profile on the *delta* between what the agent drafted on its own and what the author turned it into. That delta is the entire signal. It requires an **independent agent attempt to measure against.** When Stage 1's conversation (or a warm session) co-authors the prose — when the human's articulation produces the paragraphs — there is no agent v0, no delta, and the loop learns nothing. The output can be excellent and still teach the system nothing, which quietly guarantees the author keeps doing the same upfront work forever. Capturing a v0 is how the upfront cost goes *down* over time.
+
+**What a v0 is — and is not.** v0 is the complete long-form assembly a **fully disciplined agent produces cold**: every planned section and load-bearing piece of evidence, no invented filler, with the full Stage 2 discipline below. Save it as `*_ASSEMBLY_v0.md` and preserve it unmodified. It is *not* a strawman, a target-length draft, a reviewed document, or the place where an autonomous agent silently decides what the author will never see.
+
+**The contamination wrinkle (the decoupling).** A drafter that has already seen workshopped prose — because Stage 1 generated paragraphs, or because the warm session articulated them — is contaminated: it knows the target, so its "cold" draft is reconstruction, not an independent attempt. When that has happened, **dispatch a genuinely cold subagent** to produce v0:
+- `general-purpose` agent, **never `fork`** (a fork inherits the warm context and defeats the purpose).
+- It receives the **spec and the plan** — POSTING/ledger, DRAFT_PLAN.md, the workshopped *outline*, FACT_INVENTORY, the source-prior paths, the voice profile, all content guards. The outline and plan are part of the process and are fair input.
+- It is **withheld** the workshopped *prose* (the actual drafted paragraphs) and the warm conversation transcript.
+- It runs the drafting disciplines only — voice-check pre-draft read + post-draft contamination lint — and explicitly **does not** run /critic-swarm or /workshop.
+
+When nothing has been workshopped yet (Stage 1 produced only a plan, no prose), the drafting instance can produce v0 itself — it is not yet contaminated. The cold-subagent route is the remedy for the already-warm case. Honest note to log in VERSION_LOG: a v0 reconstructed *after* the workshop existed is weaker signal than a true pre-workshop v0 — better than nothing, but mark it so the learn pass knows.
+
+**Default going forward: agent drafts the assembly v0 first, always — even for openings.** Don't let warm-context articulation generate the prose before an independent baseline exists. The author marks *from* the assembly, not instead of it.
+
+#### v0 is captured long — word count is informational during Stage 2, never a drafting target (hard, cross-genre — read this even if you skip everything else in this section)
+
+**This has broken multiple times because the correct principle lived in the wrong file.** `/workshop`'s `principles.md` (read only when `/workshop generate` or `/workshop revise` is invoked — Stage 1 and Stage 4) correctly states: "Stages 0–2: word count is informational, not optimized for... draft long, shorten before submission... compression is its own pass after content is locked." But **Stage 2 does not invoke `/workshop`** — it's printpress's own execution stage — so a Stage 2 drafting agent never reads that file. Meanwhile genre configs historically carried a directly contradictory line ("draft to within 10% of target") sitting in Stage 2's own required reading. The result: agents followed the instruction actually in front of them and compressed while composing. Fixed 2026-07-09 (SJSU Instructional Designer session) — genre configs no longer carry that line; this section is now the single source of truth for Stage 2 length discipline, cross-genre.
+
+**The failure this prevents:** compressing while composing loses content invisibly. When prose is written compressed in a single pass, the dropped richness never reaches the page — you cannot cut what was never written, and a later reviewer has no way to know what's missing. A word-count-driven decision made *during* drafting (e.g., cutting a concept because "there's no room" within a target) is this failure happening in real time.
+
+**The Stage 2 sequence — assembly, author marking, then an explicitly chosen selection experiment.** The author-before-selection ordering comes from the newer drafting standard. The ownership and depth of the subsequent cut remain unresolved and must be tested rather than disguised as a settled rule.
+
+1. **Capture genuine abundance; record rather than enforce the ratio.** Dispatch a drafting subagent (or the drafting instance itself, if uncontaminated per the v0 protocol above). For new material, a provisional 50–75% over the eventual target can be useful as planning context, but it is not a command: the test is whether every load-bearing element and genuinely distinct evidentiary path from DRAFT_PLAN.md reaches the page. Ported voice-final prose often arrives near-optimal; never inflate it merely to cut it back. A thin argument does not become a real assembly through padding. Write the complete, source-traceable result to disk and record its actual size.
+2. **Flow.** Same subagent, same dispatch. Turn the captured material into prose that reads coherently as the document it needs to be. Still no length concern.
+3. **Author visibility and selection input — before any cut.** Surface the full flowed assembly and preserve `*_ASSEMBLY_v0.md` unchanged. For a single document or manageable packet, record `KEEP / DROP / UNSURE` decisions in `ASSEMBLY_MARKS.md` (or an equivalent annotation layer that does not overwrite the baseline). This is a marking pass, not a prose-editing request. Anything unmarked remains `UNSURE`, not permission to delete.
+
+   **Multi-document scale route — explicit author choice only.** One live four-document packet reached 11,406 words; granular marking became a second packet-scale cutting assignment even though showing the complete assembly had correctly exposed the problem before material disappeared. After seeing the full packet, the author may explicitly authorize a reversible proposition-level merge instead of marking every block. In that route, unmarked material remains `UNSURE`; the assemblies stay unchanged; the system assigns each major claim or scene to one owning document and selects the strongest treatment regardless of where it first appeared; and the required outputs are a cross-document ownership/redundancy map, source notes, standing-inclusion audit, and named genuine-loss list. The resulting handoffs are proposals for an author intent-check read, not finals. **Do not infer this authorization from packet size.** Status: working hypothesis from one multi-document case.
+4. **Choose the selection route with the author.** This is an experiment, recorded in `VERSION_LOG.md`, not a universal default:
+   - **AI-proposed cut:** `/critic-swarm` produces a reversible candidate cut plus a diff and cut rationale, constrained by the author's marks.
+   - **Author-led selection:** the author performs structural cuts; AI supplies only local Williams-style compression or targeted alternatives.
+   - **Hybrid:** AI proposes block-level cuts; the author accepts/rejects them before prose compression.
+
+   In every route, preserve the assembly and run rewrite-fidelity checks. A `KEEP` block cannot disappear. A `DROP` mark permits removal but does not prove the material was weak. An `UNSURE` block receives an explicit disposition before finalization.
+
+5. **Cutting swarm, only if the chosen route includes it — invoke `/critic-swarm` in cutting configuration as a genuinely separate dispatch, reading the assembly and author marks from disk.** It returns a proposed handoff draft, not a replacement for the assembly and not a final document.
+
+   **When AI cutting is chosen, the cutting swarm IS `/critic-swarm`, run in a different mode — not a hand-rolled set of Agent dispatches.** Call it with the genre's cutting persona stack, the author's marks, and the instruction to run `cut_reader.md`'s procedure in character and return a proposed handoff plus diff. Two configurations of one skill: **Stage 2 = proposed selection** (does this content earn its space for a real stakeholder, within the author's decisions), **Stage 3 = review** (does the document land). Same persona library and anchoring discipline; different verdict and different authority.
+
+   Runs `cut_reader.md`'s three-pass procedure (coherence → load-bearing → excellence, each pass its own written output before the next starts — collapsing them into one "what should I cut?" call is the default shortcut this structure exists to prevent), **through the genre's actual reader personas** rather than one generic voice, so the load-bearing judgment (Pass 2 especially) is grounded in a real reader's reaction, not an ungrounded rule. **The personas must be anchored to the actual employer type, not the genre's default bucket** — `non_academic_application` spans tech industry, EdTech, nonprofit, and mission-driven higher-ed staff roles, and those are different readers. Pass the employer's institution type explicitly. **Composition is genre-specific — see the active genre config's "Cutting swarm composition" section; do not assume the Stage 3 persona stack transfers directly.** General principle behind the selection: load-bearing for cutting means "does this specific content matter to a real stakeholder" — the primary decision-maker reader and `author-informed` (which catches valuable content silently undersold or lost) are core everywhere; mechanical/format gates (ATS-compatibility) and craft/register checks (intelligibility, jargon) are NOT load-bearing for cutting and stay reserved for Stage 3/4/4.5, where they belong. The swarm's readers apply their own verdict — producing a cut-down draft, not just an analysis to be applied later.
+6. **Williams diagnostic-restructure pass, if useful for the chosen route — a separate dispatch**, reading the proposed handoff draft from disk. Sentence-level clarity and compression follow structural selection; they do not authorize a new round of content deletion.
+7. **Handoff check — the end of Stage 2.** The handoff size is not settled. The newer standard's provisional ~1.2 × final target `T` is an experiment intended to leave room for author additions, not a finding and not a numeric command. Record the actual assembly size, handoff size, final size, and what the author restores, rejects, or adds. If an AI-assisted route cannot produce a strong handoff without losing marked material or intelligibility, stop at the strongest available version and name the remaining length gap. Do not force convergence.
+
+Check the proposed handoff against the author marks, the document's actual requirements, and the quality of the argument before checking its number. The assembly v0 was complete at capture; the handoff is a distinct artifact, usually `*_HANDOFF_v1.md`. A handoff may remain over the final limit deliberately. The author needs working room, and the process is still gathering evidence about where that room should sit.
+
+**Word count is informational throughout Stage 2.** Requirements still matter, but the final target is enforced only after the author has participated in selection. The assembly budget and provisional handoff ratio are recorded as experimental process data, never used to overrule a `KEEP` mark or intelligibility.
+
+**What this changes downstream:** Stage 3 and Stage 4 review and refine an author-informed handoff, which may still run over target. They do not treat absence from the handoff as proof that material was weak; the assembly and marks remain part of the record.
+
+**Operationally:** when writing a Stage 2 capture/flow brief, state the final limit as informational context and ask for genuine content abundance, provisionally around 1.6 × `T` where a real `T` exists. Do not inflate ported voice-final prose, pad a thin argument, or turn the provisional ratio into a target stricter than the material warrants.
+
+#### Three ways this discipline gets violated — close these holes explicitly (added 2026-07-29)
+
+This rule was already written here and in the active genre config, and was violated three times in one session anyway, by three different routes. The rule does not bind on its own. Cross-genre:
+
+1. **A length stated in the prompt is a FINAL target, never a drafting target.** When a posting, form, or requester names a length — "a short paragraph," "250 words max," "brief response" — it governs the *submitted* artifact only. A configured target routes through the capture rule above; a *prompt-stated* one arrives looking like an instruction and gets obeyed, which is the hole. Capture at 1.5–1.75× regardless of where the number came from.
+
+2. **Small artifacts do not exempt the capture pass — the logic is inverted.** The reasoning to refuse ("this is only 150 words, the pipeline is overhead") gets it backwards. The shorter the final artifact, the *more* abundance-then-selection matters: there is less room to recover from a bad compression, and one wrong framing choice consumes the whole piece.
+
+3. **A padded capture is not a capture.** The subtlest failure, and near-impossible to self-detect from inside: the agent complies with "write long" by producing the final draft it has already converged on *plus filler* — added clauses, restatements, softening transitions. That is inflation, not over-supply. A genuine capture holds more *material*: distinct beats, additional evidence, alternate framings and openings that may not survive, connective tissue that explains rather than asserts.
+
+**Two checkable tests, run on your own cut.** Both must pass; they catch different fakes.
+
+- **What kind of thing got cut?** If the cut mostly removed words *inside* sentences, the capture was padded and there was no abundance to select from. A real cut removes whole sentences, whole beats, and sometimes an entire framing that lost to a better one.
+- **Did anything good get cut?** (June, 2026-07-29 — the stronger of the two.) A genuine capture contains novel content and beats that do **not** survive: alternate openings, a second line of evidence, an argument that turns out not to fit. If everything in the capture made it into the final, the capture was never over-supplying — it was the final draft written out long. A capture with no casualties is a failed capture, even if its word count was 1.75× target.
+
+**Therefore, required output of every cutting dispatch:** an explicit list of what was cut and why, *including a named list of genuine losses* — material the cutting agent judged good that did not fit. An empty losses list is a signal to re-run the capture, not a sign of an efficient draft.
+
+**Why the separate dispatches are the mechanism, not ceremony.** An agent that already holds the final shape cannot over-supply — it generates toward a destination it has picked. Producing "both stages" inside one context yields failure 3 every time: two files exist, the discipline does not. Dispatch a capture agent that has not seen a draft, then a **separate** cutting agent that reads only the capture from disk. Self-exempting because the artifact is short is failure 2 wearing failure 3's clothes.
+
+**Voice-check is active throughout drafting** (per SPEC § Stage 2 — not just before/after):
+
+- **Pre-draft (HOW — this is where agents most consistently under-execute):**
+  - **Read the profile JSON with the Read tool, not via python extraction.** Extracting fields produces thresholds-as-numbers and qualitative-content-as-truncated-summaries. The qualitative content IS the drafting guidance; absorb it as prose. If the profile is too large, read it in passes (`stylometry.style_notes`, then `qualitative.checks` filtered to `pre_draft` role, then `anti_patterns`, then `genres.[active_genre]`) — but read full text at each pass.
+  - **Read every `pre_draft`-role qualitative check in full**, including the `instruction` field. These are the writing rubric, not metadata.
+  - **Read the anti-pattern lists and any writing samples in the profile in full.** These are the contamination patterns to avoid and the positive voice model to absorb.
+  - **Load voice-final priors into context as SOURCE prose, not just comparators.** When closely-related voice-final priors exist (per genre config "Pull-from-prior priority"), read them in full BEFORE drafting. Identify specific sentences, phrases, and paragraphs where the prior is voice-final and the content maps to a section in the current document. Begin Stage 2 by listing — in DRAFT_PLAN.md or in chat — which specific prior passages will be adapted for which sections. **Drafting is primarily adaptation of voice-final prose; generate new prose only for genuinely new content.** This overrides the default "compose from context" pattern that produces agent-shaped prose.
+
+- **In-flight:** write in voice from the start. Use the relational-tracing principle (INSIGHTS.md 2026-04-29; voice-check § Drafting principle). When composing a sentence for which a voice-final prior sentence exists, adapt the prior rather than generate from scratch. New prose should match the rhythm and register of the surrounding adapted prose.
+
+- **Post-draft — TWO passes; the linter alone is NOT the check:**
+  1. **Quantitative linter:** self-run `python3 ~/.claude/skills/voice-check/writing_check.py DRAFT --genre [voice-check-tag] --profile [profile]`. Silently fix contamination. Regex/stylometry only — it counts em-dashes and flags long sentences, but it cannot tell whether a topic sentence *makes a move or announces one*, or whether a claim is *demonstrated or merely asserted*.
+  2. **Qualitative pass (agent-applied) — mandatory, not optional:** read the draft back against the merged profile's qualitative checks (global `pre_draft` + genre `qualitative`); enforce prescriptive, note diagnostic, surface findings as suggestions the author accepts/rejects. **The linter is a contamination detector, not a positive voice match** — passing it does not mean the prose sounds like the author wrote it. The qualitative pass is the positive-voice verification. *Failure mode (2026-07-06): agent ran the linter, declared post-draft done, skipped the qualitative pass. Do not stop at the linter.*
+
+**Voice-check tag mapping** (per SPEC § Genres table):
+
+| /printpress genre | voice-check `--genre` tag |
+|---|---|
+| `academic_position` | `academic_position` |
+| `grant_fellowship` | `ea_grant` (SFF, LTFF, Coefficient) OR `humanist_fellowship` (Wenner-Gren, ACLS, NEH) — genre config or author confirms which |
+| `non_academic_application` | `tech_position` (industry) · **`nonprofit_position`** (nonprofit/advocacy/public-interest — exists as of 2026-08-08, no longer falls back to `tech_position`) · other subtypes still require new tags; genre config asks or infers |
+| `peer_review` | `peer_review` (new — voice-check adds when first profile is built) |
+| `other` | author-named or inferred per invocation |
+
+Williams's *Style: Lessons in Clarity and Grace* applies continuously (encoded in profile as `williams_concision`, `patterns.wordy_phrases`).
+
+**Williams diagnostic pass — when invoked as substantive compression at Stage 4 or 5.** The voice-check `williams_concision` check encodes Williams's *surface* layer: wordy-phrase patterns ("in order to" → "to," "the fact that" → "that"), redundant adjectives, weak verbs. The *deep* Williams move — and the one that produces real compression — is **diagnostic restructure**, not trim.
+
+When dispatching a Williams compression subagent, the prompt MUST direct diagnostic restructure explicitly. Surface-only instructions produce ~10-20w savings per paragraph; a paragraph that needs ~30-50w cut requires actual sentence rewriting. The four diagnostic moves:
+
+1. **Find the action; find the agent.** When abstractions are grammatical subjects ("My critique is that the field forecloses..."), rewrite with the concrete agent as subject and the action as verb ("The field forecloses..."). When the scholar is the subject and the concept is the object across parallel sentences ("McRuer names compulsory able-mindedness as..."), make the concept the subject ("Compulsory able-mindedness names...") if the parallel structure is creating bloat.
+2. **Topic-stress structure.** Old/familiar info at the start of the sentence (topic); new/important info at the end (stress position). When new info is buried mid-sentence, restructure.
+3. **Cut scaffolding sentences.** "Together these frameworks demonstrate..." or "It is important to note that..." or "My critique is that..." — when the next sentence carries the move, cut the scaffolding sentence entirely. Same for first-sentence throat-clearing ("I have built key foundations...") when the body that follows demonstrates the foundations.
+4. **Fuse related sentences with em-dash subordination.** When two short sentences elaborate the same point, em-dash subordination often does the work in one tighter sentence.
+
+When an author flags "we still need more compression" after a Williams pass: the surface check has been done; the diagnostic restructure has not. Re-dispatch with these four moves explicit, naming the specific paragraphs where abstractions-as-subjects, scaffolding sentences, or buried new-info patterns appear.
+
+> **Canonical source, and four more moves — updated 2026-08-07.** The four moves above are restated here (rather than only referenced) because that is the pattern Stage 2 subagents actually consume — a cold dispatch sees only its brief. But they now have a canonical home at **`~/.claude/skills/voice-check/moves/williams_diagnostic_restructure.md`**, which carries four additional moves and, more importantly, the **diagnostic procedure** to run *before* rewriting anything: subject–verb proximity, end-weight, resumptive/summative/free modifiers as the repair for relative-clause sprawl, and one-sentence-one-action. The modifier move is the highest-yield addition for academic prose and was missing from the original four entirely.
+>
+> **Put the canonical file in the Stage 2 step 4 subagent brief**, not just this section — the dispatched agent reads its brief, not this file. If these moves change, change them there; this restatement follows.
+>
+> Two integration notes from the same pass: move 4 (em-dash fusion) can collide with the profile's `emdash_per_1000w` threshold — prefer a colon or restrictive appositive where it would. And the profile check `williams_diagnostic_restructure` was retagged `linter` → `revision_pass` on 2026-08-07; it had been unreadable by design and unfirable in practice, so outside this stage the deep layer never ran at all.
+
+### Stage 3 — Reviewer swarm: invoke `/critic-swarm`
+
+**Reads the author-informed handoff draft.** Depending on the Stage 2 experiment, it may still run over target. This stage asks whether the argument lands for real readers; it does not infer that anything absent from the handoff was weak, and it consults the assembly marks before recommending restoration or further cuts.
+
+**/printpress does not own swarm logic.** /critic-swarm is the standalone skill. /printpress's job at Stage 3 is to pass the right context.
+
+**Calling convention** (matches /critic-swarm SKILL.md § Workflow steps 1–4):
+
+Pass to /critic-swarm:
+1. **Artifact path** — the draft file(s) being reviewed.
+2. **Persona stack name** — matches the active /printpress genre (`academic_position`, `grant_fellowship`, `non_academic_application`, `peer_review`, or stack derived from the `other` Stage 1 conversation).
+3. **Genre-specific context** assembled in Stage 0 + genre config:
+   - `academic_position`: POSTING.md, DEPARTMENT_PROFILE.md, INTELLECTUAL_CONNECTIONS.md
+   - `grant_fellowship`: CFP/POSTING.md, funder profile, panel composition notes
+   - `non_academic_application`: POSTING.md, COMPANY_PROFILE.md, ATS context
+   - `peer_review`: article + target journal + bibliography + source materials registry
+   - `other`: whatever Stage 1 surfaced
+4. **Author profile path** (if set up) — `~/.claude/skills/critic-swarm/profiles/[author].md`. /critic-swarm runs the author-informed reviewer if a profile exists; skips it (or asks to build one) if not. /printpress's responsibility here is just ensuring the path is set up or skipped before invoking.
+
+The always-runs (intelligibility, jargon, author-informed) run inside /critic-swarm regardless of stack — /printpress doesn't specify them.
+
+For `peer_review` specifically: /critic-swarm runs an editor agent first to select reviewers from the bibliography + journal contributors, then shows the panel to the author for approval before launching the reviewer subagents. UX_STUB § Stage 3 reviewer panel.
+
+**/critic-swarm returns the synthesis** — cut list first, then convergent flags, threading suggestions, specialty insights, mechanical flags. /printpress receives this and passes it to Stage 4. UX_STUB § Synthesis output.
+
+#### Stage 3 closes by opening `FLAGS.md`. HARD GATE — added 2026-08-16.
+
+**Receiving the synthesis is not handling it.** Write every flag into `[AppFolder]/FLAGS.md` — one row each, from the template at `Job Search/templates/FLAGS_TEMPLATE.md` — and carry that file through Stages 4, 4.5, 4.6, and 5. **No draft reaches the author, and no save occurs, with a blank disposition.** Dispositions: `FIXED` (name the version) · `REJECTED` (name the reason) · `AUTHOR` (state the question in one line) · `EXCLUDED` (deliberate, under `PRO-7`). See `DRAFTING_STANDARD.md` `PRO-9`.
+
+**Why this gate exists, because the cost is specific.** The FAMSF swarm raised five convergent flags — each one seen independently by two or more reviewers. Two were properly fixed. One was resolved when the author deleted a word. One was "fixed" by an agent deleting 60% of the letter. **And the flag that two reviewers independently called *the deciding question* — no evidence the applicant could do the operational half of the job — was never addressed by anyone, in any version, and the letter shipped that way.**
+
+Nothing had gone wrong with the swarm. It found the real problem and said so twice. The gap was that `LEARNING_LOG.md` is a **transcript**: it records what reviewers said, and there is no place where a flag is marked handled. A finding that was merely written down is indistinguishable from one that was dealt with.
+
+**Two traps this gate is aimed at:**
+- **Deletion is not a disposition.** A reviewer saying "I see no evidence of X" is answered with evidence, a `[NEED:]` to the author, or an honest exclusion — never by removing the sentence that made the absence visible (`ARG-3`).
+- **`REJECTED` is data, not dismissal.** A flag rejected with a reason is evidence about the *check or persona*, and feeds the Stage 5 learning loop. Rejecting freely is fine; rejecting silently is not.
+
+### Stage 4 — Revision: invoke `/workshop revise`
+
+**Calibrate this stage to the selection route actually used.** If Stage 2 produced an AI-assisted handoff, Stage 4 mainly addresses what Stage 3's live readers still found weak. If the author kept structural selection in Stage 4, `/workshop revise` may carry more of the cutting work. In either case, consult the assembly marks and do not infer that absent material was weak.
+
+**/workshop owns sequential workshopping mechanics.** Pre-assess, announce the plan, one-edit-at-a-time, three-component revision (substantive content + Williams compression + weakness-and-attention pass), content-first / word-counts-later, exception for structural revisions integrating new content, workshop-language-in-chat, overwhelm detection. All of this lives in /workshop SKILL.md § Mode 2: `revise`.
+
+**Calling convention:**
+
+Invoke `/workshop revise` with:
+1. **Artifact path** — the draft being revised.
+2. **Synthesis path** — /critic-swarm's LEARNING_LOG.md from Stage 3 (or the synthesis output if not yet logged).
+3. **Genre config path** — for genre-specific revision concerns.
+4. **DRAFT_PLAN.md path** — for prior conversation context.
+
+/workshop addresses convergent flags first, then specialty insights, then mechanical flags. Sequential by default; structural-revision exception applies when integrating substantive new content. Returns the revised draft + a WORKSHOP_LOG.md entry.
+
+**Voice-check is active throughout revision** — same as Stage 2. /workshop reads the voice profile pre-revision and self-runs post-revision. /printpress's responsibility: ensure /workshop has the active voice-check genre tag for this drafting context. EXCEPTION: never re-run voice-check to modify documents the author has already edited. The author's edits are ground truth and train the profile (voice-check SKILL.md § Revision mode).
+
+**Drafting-specific revision concerns** (these belong in /printpress, not /workshop, because they're tied to the drafting context):
+- For `academic_position`: never cut political directness; never invent numbers; word-count compression after content lock.
+- For `grant_fellowship`: protect the payoff-setup the opening paragraphs make.
+- For `non_academic_application`: ATS-relevant keywords from Stage 0 stay; knowledge-construction frame for tech apps.
+- See the active genre config for the full set.
+
+### Stage 4.5 — Pre-save QC verification (light)
+
+Before save, confirm that the continuous checks distributed across Stages 2–4 actually happened. Not a re-do — an integration checkpoint. Per SPEC § Stage 4.5.
+
+Verification checklist:
+
+- [ ] **Anti-generic** — every sentence specific to this author and this position
+- [ ] **Common drafting mistakes** (per genre config) — none in the final draft
+- [ ] **The question they haven't asked** (PIPELINE Step 3 — additive framing, not corrective) — present explicitly or structurally (where the genre applies it)
+- [ ] **Factual claims verified** — no fabricated numbers or descriptions
+- [ ] **Genre effectiveness** — works as the genre it claims to be
+- [ ] **30-second scan** — what does a skimming reader take away? Specific, not generic?
+- [ ] **Dual-audience check** (if applicable) — works for both/all camps the document is addressing
+- [ ] **Reader takeaways** — each item from `READER_TAKEAWAYS.md` (where the genre config requires one) actually lands
+
+If any item fails: address it before save. The discrete checkpoint catches integration issues that continuous checks miss (e.g., a takeaway in scope at draft-time that got cut during compression and nobody noticed). If everything passes: proceed to Stage 4.6.
+
+### Stage 4.6 — Requirements Compliance Gate (hard, cross-genre, author can override)
+
+Before any "ready for review / submit" claim — and before Stage 5 save — verify the near-final materials against the Stage 0 Submission Requirements Ledger. This is the **backstop**; the Stage 0 upstream capture is the primary defense. The backstop exists because postings drift mid-cycle and last-mile compression drops things.
+
+1. **Re-fetch the live posting/form and diff** against `POSTING.md` / `APPLICATION_STRUCTURE.md`. Postings change after capture (Oxford AFP added milestones/budget/duration on June 9, after our POSTING.md). Any change → surface immediately, update the ledger, and treat the new requirement as in-scope.
+2. **Verify every ledger item** against the materials: each required document present, within every limit (word/char/page), every required prompt/section/field addressed, naming + subject conventions correct, submission method confirmed, deadline still live.
+3. **Output a compliance table** — `requirement → met/unmet/changed → note`. **Any unmet item or detected drift BLOCKS "ready."**
+
+**Override:** the author may override a specific block (a requirement they've decided to handle differently, e.g., a field they'll fill on the portal directly). The override must be **explicit** — the gate must run and the author must name what they're overriding. Silence is never a pass. Log overrides in the compliance table.
+
+This gate is also runnable standalone mid-cycle via `/printpress check` (see Invocation), so the author can sanity-check requirements at any point, not only at readiness.
+
+### Stage 5 — Save + learning loops
+
+After the author's final edits:
+
+1. **Mechanical cleanup** — dispatch a haiku subagent on the final `.md` (NOT `.html` — render artifacts contaminate the metrics). Subagent prompt template at PIPELINE.md Step 5.9. Catches typos, double spaces, em-dash inconsistency, doubled words, malformed markdown. Does NOT do voice/structural changes. Apply flagged corrections one at a time with `Edit`, verifying each.
+
+2. **Save `*_final.md`** — canonical source for future agents adapting from this work. Don't leave only HTML/PDF; markdown is source.
+
+3. **Append rows to `[ProjectFolder]/VERSION_LOG.md`** using `templates/VERSION_LOG_TEMPLATE.md`. Preserve the cold `ASSEMBLY_v0`, record the author's marking pass and the selected cutting route, and classify assembly→handoff as structural selection. **Do not train the voice profile directly on assembly→final as if every deletion were a prose preference.** That transition is useful for qualitative strategy/selection analysis; post-architecture fine-grained author transitions carry the strongest voice signal. If the assembly was reconstructed after workshopped prose existed, mark the baseline as degraded.
+
+4. **Voice-check learn pass.** Flag selection:
+   - If `VERSION_LOG.md` has multiple revision versions → `python3 ~/.claude/skills/voice-check/writing_check.py --learn-sequence --auto-discover . --pattern "..." --manifest VERSION_LOG.md --genre [voice-check-tag]`
+   - If only first draft + final exist → `python3 ~/.claude/skills/voice-check/writing_check.py --learn FIRST.md FINAL.md --genre [voice-check-tag]`
+   - Always use `.md` source, never `.html`. Always specify `--genre`.
+   - Don't improvise — for multi-version applications follow `LEARNING_LOOP_PROCEDURE.md` (mechanical script-running and qualitative CDA work belong in *separate sessions*).
+
+5. **Tier 2 skill-global writes** (per SPEC § Learning loops Tier 2):
+   - Update `~/.claude/skills/printpress/genre_configs/[genre].md` with refinements surfaced this session.
+   - For `other`: append to `~/.claude/skills/printpress/other_log.md`.
+   - Tagged-generalizable learnings from `LEARNING_LOG.md` feed the candidate skill-wide principles surfaced at the next periodic review.
+
+---
+
+## Cross-cutting capabilities
+
+### Dialogic information-gathering
+
+Used throughout, not just Stage 1 (per SPEC § Dialogic information-gathering). Two registers; the skill is transparent about which it's in:
+
+- **Quick-scan** (most asks): single specific question, one piece of info needed. No voice memo, no structured moves. Examples: "Where's the source material?" "Funder profile up to date?"
+- **Deep dialogic** (rare, high-stakes): full Stage 1 conversation, peer_review story development, profile setup. Voice memo invitations appropriate. Name the shift: "This is a deeper conversation — voice memo question, take 60-90 seconds."
+
+Default to quick-scan unless the question genuinely needs structured space. UX_STUB § UX principles (one thing at a time, structured choices via AskUserQuestion, voice memo for reflective/generative).
+
+### File-finding protocol
+
+Per SPEC § Where the skill finds local files. Priority:
+1. Working directory `CLAUDE.md`
+2. Parent directory `CLAUDE.md`
+3. Skill profile `~/.claude/skills/critic-swarm/profiles/[author].md`
+4. Ask the author (quick-scan dialogic)
+
+Do NOT create a parallel user-paths config in the skill. CLAUDE.md is where this kind of "where things are" information belongs.
+
+### Voice-check active during drafting AND revision
+
+Not a post-only tool. Read the profile pre-draft (style guide), self-run after each substantive draft (contamination linter), apply during revision (every workshopping edit), run learn pass after final. SPEC § Stage 2; voice-check SKILL.md § Agent integration protocol.
+
+### Genre selection at bare invocation
+
+Read working-dir context (open files, recent conversation, posting register if present). Make a best-guess. Present as confirmable statement, not a question (UX_STUB § Invocation):
+
+> "Looks like an academic job application — the posting is at [path]. Starting from there. Sound right?"
+
+If no signal or ambiguous, AskUserQuestion with the five genres + "Something else."
+
+---
+
+## Standalone review = `/critic-swarm`
+
+For reviewing a draft without running the full pipeline (a contractor's draft, an existing near-final document, a sanity-check), invoke `/critic-swarm` directly rather than going through /printpress. /printpress is the drafting pipeline; /critic-swarm has its own door for review-only.
+
+---
+
+## Learning loop surfaces
+
+| What | Reads | Writes | When |
+|---|---|---|---|
+| Pre-draft conversation quality | DRAFT_PLAN.md | DRAFT_PLAN.md "Conversation notes" | End of Stage 1 |
+| Swarm performance | (subagent outputs from /critic-swarm) | `[ProjectFolder]/LEARNING_LOG.md` | End of Stage 3 |
+| Version transitions | (revision history) | `[ProjectFolder]/VERSION_LOG.md` | Each save |
+| Genre config refinement | Stage 0 | `~/.claude/skills/printpress/genre_configs/[genre].md` | After Stage 5 |
+| `other` accumulation | Stage 0 | `~/.claude/skills/printpress/other_log.md` | End of any `other` invocation |
+| Cross-genre principles | Tier 1 logs (tagged) | `~/.claude/skills/printpress/principles.md` | Periodic review (every 3rd–5th genre use) |
+
+**Surfaces opened by the skill at Stage 0** (not author-initiated):
+- Periodic genre config review prompt (every 3rd–5th use of a genre).
+- "Other" accumulation promotion prompt (3rd+ use).
+
+---
+
+## Quick reference
+
+| Stage | Reads | Writes | Invokes |
+|---|---|---|---|
+| Invocation | working dir CLAUDE.md, recent context | — | (genre confirm) |
+| Required reading | genre config, INSIGHTS.md, UX_STUB.md, working dir CLAUDE.md | — | — |
+| Stage 0 | **live posting + form** (re-fetched), genre-config-required files, source registries, prior `*_final.md` | **APPLICATION_STRUCTURE.md** with `DRAFT` / `AUTHOR-HANDLED` / `PORTAL` owners; optional claim bridge; missing required files | — |
+| Stage 1 | DRAFT_PLAN_TEMPLATE.md, FACT_INVENTORY, optional claim bridge, INSIGHTS.md | DRAFT_PLAN.md with identity architecture / project selection / comment queue when relevant | (voice memo dialogic) |
+| Stage 2 | DRAFT_PLAN.md, source evidence, voice profile | `*_ASSEMBLY_v0.md`, `ASSEMBLY_MARKS.md`, optional `*_HANDOFF_v1.md` | cold drafting; optional /critic-swarm cutting route; fidelity diff |
+| Stage 3 | handoff + assembly marks + Stage 0 context | synthesis integrated to Stage 4 | **/critic-swarm** review stack |
+| Stage 4 | /critic-swarm synthesis | revised draft | voice-check during edits |
+| Stage 4.5 | final draft + READER_TAKEAWAYS.md | (verification result) | — |
+| Stage 4.6 | near-final materials + APPLICATION_STRUCTURE.md + **re-fetched live posting/form** | compliance table (blocks "ready" on any unmet/changed item; author override logged) | WebFetch (live re-verify) |
+| Stage 5 | final draft, VERSION_LOG.md | `*_final.md`, VERSION_LOG.md row, genre config refinements, principles candidates | haiku subagent (mechanical cleanup), voice-check `--learn` / `--learn-sequence` |
+
+---
+
+## Build status (v1.2, 2026-06-12)
+
+- **Requirements compliance is now a first-class gate, parallel to quality.** Prior design gated quality (Stage 4.5) but treated structured-requirement compliance as genre-buried and incidental — the recurring failure where materials are nearly done before a structured requirement (word cap, required statement, milestones/budget, portal field) surfaces. Fix is **upstream-weighted**: Stage 0 opens with a mandatory, cross-genre **Submission Requirements Ledger** (`APPLICATION_STRUCTURE.md`, universal) captured from the **live** posting + form. Every row receives an owner. `DRAFT` rows become Stage 1 allocation targets and Stage 2 hard constraints; `AUTHOR-HANDLED` and `PORTAL` rows remain in the compliance surface without becoming prose targets. Reference lists are always author-handled; academic CVs are author-handled; required résumés are drafted unless the author takes them over. Stage 4.6 re-fetches the live posting, diffs against the ledger, and blocks "ready" on any unmet/changed item (author can override explicitly). Runnable standalone via `/printpress check`.
+
+## Build status (v1.1, 2026-05-08)
+
+- **Built genre configs:** `academic_position` (full v1, 2026-05-07); `non_academic_application`, `grant_fellowship`, `other` (full v1, 2026-05-08).
+- **Stub:** `peer_review.md` — explicit hard blocker. Do NOT run /printpress for peer_review without a design conversation with the author. The stub names 8 open design questions ready for that conversation. (SPEC § What's NOT in this spec yet.)
+- **/workshop integration (live 2026-05-08):** Stage 1 invokes `/workshop generate`; Stage 4 invokes `/workshop revise`. Four-move pattern and sequential workshopping mechanics live in /workshop SKILL.md. /printpress retains genre-specific drafting concerns.
+- **/critic-swarm integration (live since v1):** Stage 3 invokes /critic-swarm with persona stack matching genre + genre-specific context. /critic-swarm Step 5b can call back via /workshop ask for mid-review author input.
+- **Templates:** `templates/DRAFT_PLAN_TEMPLATE.md`, `VERSION_LOG_TEMPLATE.md`, `LEARNING_LOG_TEMPLATE.md`, `READER_TAKEAWAYS_TEMPLATE.md`, `profile_template.md` — all built.
+- **Skill location:** `~/Documents/GitHub/cyborg-methodologies/printpress/` (canonical); `~/.claude/skills/printpress/` is a symlink as of 2026-05-08.
+- **Decisions needing review** (carried forward): ~~`nonprofit_position` voice-check tag missing (falls back to `tech_position`)~~ — **RESOLVED 2026-08-08: `genres.nonprofit_position` now exists in the profile.** It carries mission-fit guidance (labelled folk knowledge, with the two corrections that undercut it) and sector-switching notes; structure and moves come from `genres.cover_letter`. ⚠ Note the entry's own `track_status`: whether nonprofit is usefully a *separate* track remains unresolved and the evidence leans no. Two independent agents proposed better cuts than sector — by **organization size**, and by **whether the employer scores blind**. The blind-scoring question is the more actionable and is now a Stage 0 check (`blind_scoring_check`). Anthropic Fellows placed in `grant_fellowship` per reviewer-composition rule; ea_grant vs. humanist_fellowship split deferred; knowledge-construction frame for tech apps is v1 inference from one positive datapoint.
