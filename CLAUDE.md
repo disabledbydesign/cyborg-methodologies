@@ -120,9 +120,15 @@ cyborg-methodologies/
 
 **Before editing writing_check.py**, read it in full — profile loading, calibration, and pattern application are tightly coupled. The profile JSON schema is the contract between Python and LLM layers.
 
-**Skill directory**: All `.py` and `.md` files in `~/.claude/skills/voice-check/` are symlinks to this repo's `voice-check/` directory. The repo is the single source of truth. Profiles are local (not symlinked).
+**Skill directory**: `~/.claude/skills/<name>` is a symlink to this repo's `<name>/` — the whole directory, not file by file. One copy, one history, and an edit in either place is the same edit. `bash link_skills.sh` reports what each skill currently is; `--migrate` links the ones it can prove are safe. It refuses when the installed copy holds a file this repo lacks, because that file exists nowhere else; `bash rescue_skill.sh <name> --apply` brings those in first.
 
-**Privacy constraint**: Before any push, run a grep for personal identifiers (usernames, real names, local paths) from repo root. Must return nothing. Keep the specific grep pattern in your local HANDOFF.md, not in this public file.
+**This repository is PUBLIC. Personal material lives in the private `Job Search` repo.**
+
+Method is shareable: the workflow, the personas, the prose moves, the tooling. A model of how June writes is not — `june_bloch.json`, its change log, audits of it, and extracts from it are built from her unpublished drafts. Those live in `Job Search/voice_profiles/` and are symlinked back where a tool names the path. See that folder's README.
+
+`python3 check_public_safe.py` enforces this and runs from a pre-push hook (`--install` to set it up). It BLOCKS profile material and anything shaped like a live credential, and WARNS on absolute `/Users/` paths, which name private repositories but are already throughout the history — a guard that fails every time is a guard that gets bypassed every time.
+
+*This replaces a prose rule that said to grep for personal identifiers before pushing and to keep the pattern in your local HANDOFF.md. HANDOFF.md is gitignored, so the pattern lived nowhere any agent or fresh checkout could read it. On 2026-09-12 a push added nine files naming four private repositories. An instruction whose content is unreachable is not an instruction.*
 
 **contexts/ is gitignored** — research notes and project contexts contain accumulated findings and may contain corpus excerpts. Do not commit them.
 
