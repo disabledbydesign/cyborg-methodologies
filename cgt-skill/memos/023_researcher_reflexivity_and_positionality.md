@@ -1,0 +1,16 @@
+# Researcher reflexivity and positionality
+*Status: current | Date: 2026-04-28*
+
+Constructivist GT requires the researcher to interrogate their own position — what they bring, what their stake is, what their lived experience makes visible and what it makes invisible. The researcher's positionality is not bias to be eliminated; it is constitutive of the analysis (Charmaz: theory is constructed *through* the researcher's interpretive engagement, not despite it).
+
+Apparatus reflexivity (memo 003) and researcher reflexivity are both required, and they're not the same thing. Apparatus reflexivity asks: what gravities, lenses, and force relations are operating in the cyborg situation? Researcher reflexivity asks: what does *this researcher*, with this body, this history, this set of disciplinary commitments, this material location, see and not see? The cyborg practice doesn't replace researcher reflexivity with apparatus reflexivity — it adds a second layer alongside the first.
+
+The cyborg-specific extension here is sharp: lived experience as analytical resource, not as bias. The researcher whose body, identity, or material conditions don't fit the systems being studied has design expertise the dominant-position researcher doesn't have. This is Haraway's situated knowledge claim: partial perspective from a marginalized location is more rigorous than the view-from-nowhere, not less. Disability, transness, race, class, neurodivergence, and other axes of marginalization are not impediments to objectivity — they are sources of seeing that the apparatus would otherwise miss.
+
+What the tool does:
+
+- **Orientation dialogue at project init** (already specified in SPEC.md, Phase 2a). Surface what the researcher brings — disciplinary training, sensitizing concepts, lived experience, stake in the question. Captured in PROJECT.md. This is not performative reflexivity; it is starting condition for the analysis.
+- **Ongoing reflexivity prompts at decision points**, not constant noise. When a category is consolidating, when a tension is being resolved, when a finding is being elevated — surface "what about your position is shaping this read?" as a question, not as an obligation. The researcher's reading is not the problem; *unmarked* reading is the problem.
+- **Make positionality changeable.** Position is not fixed at project init. Researchers learn, shift, encounter new material, find prior framings inadequate. The PROJECT.md positionality material should be treated as a living memo — revisable, datable, with prior states preserved.
+- **Refuse the bias-elimination frame.** The tool should never frame the researcher's position as something to neutralize, control for, or minimize. Position is constitutive, not contaminating. The framing the tool models is "what does your position make visible?" not "how do we account for your bias?"
+- **Hold the cyborg connection visible.** The tool should reflect back to the researcher when their lived experience is doing analytical work — when an insight only became visible because of where they're standing. This is not flattery; it is methodological practice. (Charmaz 2017, 2020: CGT as critical inquiry; the marginalized researcher's seeing is not incidental to the rigor, it is partly *what makes it rigorous*.)

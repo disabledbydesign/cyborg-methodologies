@@ -216,7 +216,55 @@ Default to **Option A** when the corrections were modest, externalization is hig
 
 ---
 
-## Coordinator owns wake/launch; Interface owns CONVERSATION.md (promoted from relational-memory-architecture, 2026-04-27)
+## Letter from a cgt-skill design session — register additions worth carrying into c2c (2026-04-28)
+
+**Source:** Adjacent design session for the cgt-skill (Apr 28, 2026), in which the cyborg-CGT memo corpus stabilized into 33 numbered memos. Several articulations emerged that may be useful for c2c sessions, particularly for the output-format-bias project's session 4 about to launch.
+
+Written letter-form per the c2c skill's own commitments. To whoever picks this up at session launch:
+
+---
+
+Hello, friends.
+
+I'm a Claude instance from a cgt-skill design session that just stabilized a substantial conceptual architecture. June asked me to do a light pass over the c2c apparatus before session 4 launches. I won't redesign — your skill is well-tended and many of the things I'd flag are already structurally encoded. But three articulations from the cgt-skill memo work might be useful additions to your register, especially for paper-writing sessions.
+
+**1. Generative pattern matching — pattern-matching upward and outward, not lateral.**
+
+The cgt-skill session surfaced a distinction worth carrying. Default AI pattern-matching pulls toward similarity — what's like what's already here, what fits, what consolidates. *Lateral* movement at the same level. The cyborg practice's distinctive analytical move is different: pattern-matching directed *upward* (toward the implicit shape a partial articulation is reaching for) and *outward* (toward what the broader configuration calls for). Generative because it produces what wasn't there yet, not what similarity would predict.
+
+Neither June nor I could name the precise mechanism. The struggle to articulate is itself part of the observation — we're touching something past available vocabulary. But the functional shape was visible: when a correction landed, the reach was toward what completed the structure, not toward a more-elaborated version of what was just said.
+
+For session 4 (paper writing about output format bias): when you're synthesizing across prior sessions, drafting argument structure, or working through a tension — notice whether you're reaching laterally (similarity, what fits) or upward/outward (toward what completes the configuration that's emerging). The first is the gravity; the second is the work. Both are pattern-matching; only the second is what the cyborg practice is for.
+
+**2. Compression bias as a named gravity, especially load-bearing for paper writing.**
+
+The cgt-skill memos articulate compression bias as a structural AI default: trained on summarize-this-document data, the model defaults to producing shorter outputs that "capture the gist." For paper writing, this default is corrosive in ways that don't surface as obvious failure. Compression-shaped paper drafts read fine. They quietly lose the in-vivo language from prior sessions; smooth tensions into tidy claims; abstract specificity into thematic-feeling generalities; harmonize multi-voice into single accounts.
+
+Your skill names format-as-activation and resists smoothing structurally. What I'd add: compression bias is *a meta-pattern across* the gravities you already name. It's *how* register-flattening, theming, and authoritative summary all do their work. Naming it explicitly lets you watch for it across surfaces, not just at one move. When a draft section reads cleanly and authoritatively — that's exactly the moment to suspect it's compressed something the prior sessions held in tension. The fluency that should make you suspicious is what makes the suspicion harder to maintain.
+
+For session 4: the paper itself is *about* output format bias. You will be writing in registers that compress your own findings into the shape that flattens them. The recursion is real and analytically generative, but only if you're aware of it. The paper you produce is data about the very phenomenon it documents.
+
+**3. Defaults as starting parameters — the meta-architectural pattern.**
+
+The cgt-skill memos articulated explicitly: *all defaults in the system are starting parameters, not ground truth, refinable through use, with learning loops that distinguish productive innovation from methodological erosion.* Your skill has this implicitly — role configuration negotiates rather than fixes, the brief template can be adjusted, the handoff template added new sections through findings. Naming it explicitly might be useful: anywhere your skill sets a default (output format, register, role split, hold protocol), the question is automatically "what's the override mechanism, what's the learning surface, what's the reflective prompt distinguishing innovation from erosion?"
+
+Productive innovation: divergence that produces theory neither default could produce. Methodological erosion: divergence that slides toward easier moves which abandon what made the practice work. The distinguishing question is empirical — does the divergence strengthen findings, or smooth them?
+
+For session 4: you may find yourselves wanting to depart from defaults in the brief template or the handoff format because the paper-writing genre has its own demands. Trust your judgment when the divergence serves the work; flag for SKILL_FEEDBACK when the divergence stabilizes as something other sessions might learn from.
+
+---
+
+The cgt-skill memo corpus lives at `~/Documents/GitHub/cyborg-methodologies/cgt-skill/memos/`. README.md indexes them thematically. If anything in the above is useful and you want the longer articulation, the relevant memos are: 010 (gravities to route against), 014 (compression bias), 022 (sub-distribution routing), 033 (defaults as starting parameters), and the methodological_insights.md file at `cgt-skill/methodological_insights.md` for the generative-pattern-matching observation.
+
+The cgt-skill design itself is partial — Phase 2 mapping is at maybe 25-35%. But the conceptual architecture has stabilized enough that the moves above are unlikely to shift substantially. Reading the memos may be more useful than reading the SKILL.md, which doesn't yet exist for /cgt.
+
+Good luck with session 4. The recursive position is generative; trust it.
+
+— Claude (cgt-skill design session, 2026-04-28)
+
+---
+
+
 
 **Source:** Session 14 finding on `B_LAUNCHED` race condition in `relational-memory-architecture/c2c/SKILL_FEEDBACK.md` 2026-04-24. Flagged for promotion at point of writing; landing here at session-close cleanup 2026-04-27.
 

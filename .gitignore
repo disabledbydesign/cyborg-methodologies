@@ -5,12 +5,24 @@ __pycache__/
 .pytest_cache/
 *.DS_Store
 
+# Timestamped backups — the git history is the backup
+*.bak
+*.bak.*
+*.bak-*
+*.orig
+*.rej
+*.installed-copy
+
 # Personal context files (filled-in project instances)
 contexts/
 
-# Personal voice profiles
-profiles/*
-!profiles/base.json
+# Personal voice profiles.
+# NOTE: `profiles/*` contains a slash, so git anchors it to the repo ROOT and it
+# does NOT match voice-check/profiles/. That gap left june_bloch.json (240 KB of
+# June's personal writing profile) untracked-but-unignored in a PUBLIC repo — one
+# `git add -A` away from being published. The `**/` forms below close it.
+**/profiles/*
+!**/profiles/base.json
 
 # Writing samples used for calibration
 samples/
@@ -29,3 +41,12 @@ HANDOFF.md
 entities.json
 mempalace.yaml
 graphify-out/
+
+# private raw session data (added 2026-06-25)
+**/raw_transcripts/
+**/*.jsonl
+
+# Per-machine agent settings — local to one checkout, not method
+.claude/
+**/.claude/
+.obsidian/

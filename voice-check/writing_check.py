@@ -1297,7 +1297,13 @@ def flag_marker(flagged: bool) -> str:
     return " [FLAG]" if flagged else ""
 
 
-def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
+def format_report(filepath: str, results: dict, flagged_sentences: list,
+                  vale: dict = None) -> str:
+    """Render the voicing report.
+
+    `vale` is the merged result from vale_bridge.merge(), or None when Vale was
+    not run. The parameter is optional so existing callers keep working.
+    """
     filename = os.path.basename(filepath)
     wc = results["words"]
     ss = results["sentences"]
@@ -1403,6 +1409,16 @@ def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
         lines.append(f"    {line_info}\"{ex['text']}\" ({ex['subject_weight']} content words)")
     lines.append("")
 
+    # Mechanical rules (Vale). Placed after the measured sections and before the
+    # flagged sentences, so the report reads: what was measured, what a fixed
+    # rule caught, then what to go look at.
+    if vale is not None:
+        try:
+            import vale_bridge
+            lines.append(vale_bridge.format_section(vale))
+        except ImportError:
+            pass
+
     # Flagged sentences
     lines.append("\u2550" * 51)
     lines.append("  FLAGGED SENTENCES (review these)")
@@ -1476,11 +1492,29 @@ def format_report(filepath: str, results: dict, flagged_sentences: list) -> str:
     lines.append(f"  Flags: {total_flags} total ({voice_flags} voice, {structural_flags} structural)" +
                  (f" — {breakdown_str}" if breakdown_str else " (clean)"))
 
+    # Vale alerts are counted separately, never folded into the flag arithmetic
+    # above. That arithmetic is calibrated against thresholds derived from June's
+    # corpus; Vale's counts come from hand-written rules with no such calibration,
+    # and adding them would silently change what "clean" means.
+    vale_errors = 0
+    if vale is not None and vale.get("ran"):
+        vale_errors = vale["counts"]["error"]
+        lines.append(f"  Vale: {vale['total']} rule alerts "
+                     f"({vale['counts']['error']} error, "
+                     f"{vale['counts']['warning']} warning, "
+                     f"{vale['counts']['suggestion']} suggestion) — counted separately")
+    elif vale is not None and vale.get("note"):
+        lines.append(f"  Vale: not run — {vale['note'].split('.')[0]}.")
+
     # Overall assessment: voice flags are more diagnostic than structural flags
     # A document can have several long sentences and em-dash insertions as
     # deliberate style, but hedge words and self-aggrandizing frames are always
     # agent artifacts.
-    if total_flags == 0:
+    if total_flags == 0 and vale_errors:
+        lines.append(f"  Draft passes quantitative voicing checks, but Vale reports "
+                     f"{vale_errors} error-level rule violation(s). Address those, "
+                     f"then proceed to qualitative CDA review.")
+    elif total_flags == 0:
         lines.append("  Draft passes quantitative voicing checks. Proceed to qualitative CDA review.")
     elif voice_flags == 0 and structural_flags <= 15:
         lines.append("  Draft has structural flags only (no voice flags). Review long sentences and em-dashes, then proceed to qualitative CDA review.")
@@ -2795,18 +2829,45 @@ def _gra_sentences(text: str) -> list:
         return [text] if text else []
 
 
+GRA_GLOSS_ADJACENCY_CHARS = 12
+
+
+def _gloss_is_adjacent(sent: str, start: int, end: int) -> bool:
+    """Does a parenthetical actually gloss the term at [start:end), or does it merely
+    share the sentence with it?
+
+    The old test was `"(" in sent` — one parenthetical anywhere marked EVERY label in
+    that sentence as glossed. That inverted the check exactly where it mattered most:
+    the more labels a sentence carries, the likelier one of them IS glossed, and that
+    single parenthesis then immunised all the others. Found 2026-07-31 against the GRA
+    staged corpus, where "GRA" ran unglossed through ~140 records while this check
+    passed them — one properly-glossed neighbour per sentence was enough to suppress it.
+
+    Adjacent = a parenthetical opens within GRA_GLOSS_ADJACENCY_CHARS after the term,
+    or the term itself sits inside parentheses (already glossing something)."""
+    if "(" in sent[end:end + GRA_GLOSS_ADJACENCY_CHARS]:
+        return True
+    before = sent[:start]
+    return before.count("(") > before.count(")")
+
+
 def check_label_without_descriptor(field_name: str, text: str, lexicon: list) -> list:
     """Flag internal shorthand (R4, S45, b2, backticked hex ids, project coinages) used
-    with no plain-language descriptor in the same sentence. The gloss heuristic is
-    deliberately crude (a parenthetical anywhere in the sentence) per the SPEC's own
-    worked examples: PASSES 'the Session-2 revision frame (R3: any situated position can
-    be revised, owned and recorded)'; FLAGS 'after the R3 collapse, ...'."""
+    with no plain-language descriptor NEAR IT. PASSES 'the Session-2 revision frame
+    (R3: any situated position can be revised, owned and recorded)'; FLAGS 'after the
+    R3 collapse, ...' — and now also flags a bare label that merely shares a sentence
+    with some other term's parenthetical (see _gloss_is_adjacent).
+
+    Note on scholarly terms (June, 2026-08-01): for a scholar or a named concept from
+    the literature, the fix a flag should prompt is ATTRIBUTION, not definition — name
+    Barad, Sandoval, Haraway; do not gloss intra-action. The reading agent's training
+    data holds the scholarship, and a one-line repo gloss substitutes a flattened
+    summary for it. Lexicon entries for such terms say so in their gloss field."""
     findings = []
     for sent in _gra_sentences(text):
-        has_gloss = "(" in sent
         for pat in GRA_LABEL_SHORTHAND_PATTERNS:
             for m in re.finditer(pat, sent):
-                if not has_gloss:
+                if not _gloss_is_adjacent(sent, m.start(), m.end()):
                     findings.append({
                         "field": field_name, "term": m.group(),
                         "sentence": sent.strip()[:160],
@@ -2814,7 +2875,19 @@ def check_label_without_descriptor(field_name: str, text: str, lexicon: list) ->
                     })
         for entry in lexicon:
             term = entry.get("term", "")
-            if term and term.lower() in sent.lower() and not has_gloss:
+            if not term:
+                continue
+            # Word-boundary match, not substring — AND case-sensitive whenever the term
+            # carries capitals. The coinage "STAKES" must not fire on the ordinary word
+            # "stakes" in "the stakes don't warrant ...", and "GRA"/"CARE principles"/
+            # "Barad" should match only in their real casing. All-lowercase coinages
+            # ("the overflow lens") stay case-insensitive so sentence-initial use still
+            # matches. (Caught 2026-08-01 — the substring+insensitive match was
+            # pre-existing; tightening the gloss window removed the parenthetical that
+            # had been masking it.)
+            flags_re = 0 if any(c.isupper() for c in term) else re.IGNORECASE
+            m = re.search(r"\b" + re.escape(term) + r"\b", sent, flags_re)
+            if m and not _gloss_is_adjacent(sent, m.start(), m.end()):
                 findings.append({
                     "field": field_name, "term": term,
                     "sentence": sent.strip()[:160],
@@ -3091,6 +3164,30 @@ def main():
              "silent for 5+ runs."
     )
     parser.add_argument(
+        "--no-vale", action="store_true", dest="no_vale",
+        help="Skip the Vale mechanical-rule pass. Vale runs automatically when it "
+             "is installed and a .vale.ini is found above the target file."
+    )
+    parser.add_argument(
+        "--vale-config", type=str, dest="vale_config", default=None,
+        help="Path to a specific .vale.ini (default: walk up from the target file)"
+    )
+    parser.add_argument(
+        "--vale-bin", type=str, dest="vale_bin", default=None,
+        help="Path to the vale binary (default: PATH, then ~/bin, /opt/homebrew/bin)"
+    )
+    parser.add_argument(
+        "--vale-timeout", type=int, dest="vale_timeout", default=60,
+        help="Seconds before a Vale run is killed (default: 60). A timeout almost "
+             "always means a catastrophic-backtracking regex in a style rule."
+    )
+    parser.add_argument(
+        "--vale-audit", action="store_true", dest="vale_audit",
+        help="Report which of the profile's pattern lexicons the Vale rules do NOT "
+             "cover. Run this after the learning loop adds patterns to the profile — "
+             "it is the drift check between the profile and the static rule files."
+    )
+    parser.add_argument(
         "--log-cited-checks", type=str, dest="log_cited_checks", default=None,
         help="Comma-separated check IDs to append to the most recent run's "
              "citation log entry. Called by agents after Phase 4 CDA sweep "
@@ -3119,6 +3216,37 @@ def main():
     # Audit diagnostics mode (no draft file required)
     if args.audit_diagnostics:
         run_audit_diagnostics(profile_path=args.profile)
+        return
+
+    # Vale coverage audit — the drift check between the profile's pattern
+    # lexicons (which the learning loop grows) and the Vale rule files (which it
+    # does not). No draft file required; a file argument only tells the audit
+    # where to look for .vale.ini.
+    if args.vale_audit:
+        try:
+            import vale_bridge
+        except ImportError:
+            print("Error: vale_bridge.py not found next to writing_check.py.",
+                  file=sys.stderr)
+            sys.exit(1)
+        audit_profile_path = args.profile
+        if not audit_profile_path:
+            discovered_path, count = discover_profile()
+            if discovered_path:
+                audit_profile_path = discovered_path
+            else:
+                print("Error: --vale-audit requires --profile (no single user "
+                      "profile found).", file=sys.stderr)
+                sys.exit(1)
+        hint = args.file or os.path.join(os.getcwd(), "_")
+        audit = vale_bridge.audit_coverage(
+            load_profile(audit_profile_path), hint,
+            vale_bin=args.vale_bin, config=args.vale_config,
+        )
+        if args.output_json:
+            print(json.dumps(audit, indent=2, ensure_ascii=False))
+        else:
+            print(vale_bridge.format_coverage_report(audit))
         return
 
     # Post-analysis citation logging (no draft file required)
@@ -3339,6 +3467,42 @@ def main():
         print(f"\nFile has no body text (only headers or empty). Nothing to analyze.\n")
         sys.exit(0)
 
+    # --- Vale mechanical-rule pass -----------------------------------------
+    # Runs by default so this stays ONE command. Every failure path degrades to
+    # a printed note rather than an exception: a missing linter must never stop
+    # a voicing report from being produced.
+    vale_merged = None
+    if not args.no_vale:
+        try:
+            import vale_bridge
+        except ImportError:
+            vale_merged = {
+                "available": False, "ran": False, "alerts": [], "total": 0,
+                "counts": {"error": 0, "warning": 0, "suggestion": 0},
+                "suppressed": {}, "threshold_notes": [],
+                "note": "vale_bridge.py not found next to writing_check.py — "
+                        "mechanical rule checks skipped.",
+            }
+        else:
+            raw_vale = vale_bridge.run_vale(
+                args.file, vale_bin=args.vale_bin, config=args.vale_config,
+                timeout=args.vale_timeout,
+            )
+            # The thresholds Vale must not second-guess: these are the values in
+            # force for THIS genre, and a static rule file cannot know them.
+            active_thresholds = {
+                "long_sentence_words": THRESH_LONG_SENT,
+                "rewrite_sentence_words": THRESH_REWRITE_SENT,
+                "emdash_insertion_words": THRESH_EMDASH_INSERT_WORDS,
+                "emdash_per_1000w": THRESH_EMDASH_PER_1000,
+            }
+            vale_merged = vale_bridge.merge(
+                raw_vale, results,
+                active_thresholds=active_thresholds,
+                rule_static_values=vale_bridge.read_rule_static_values(
+                    raw_vale.get("config")),
+            )
+
     if args.output_json:
         # Clean up non-serializable data for JSON output
         output = dict(results)
@@ -3352,10 +3516,13 @@ def main():
         output["sentences"]["over_rewrite"] = [
             {"sentence": s[:120], "words": w} for s, w in results["sentences"]["over_rewrite"]
         ]
+        # Additive key: existing consumers of the JSON schema are unaffected.
+        if vale_merged is not None:
+            output["vale"] = vale_merged
         print(json.dumps(output, indent=2, ensure_ascii=False))
     else:
         flagged = results["flagged_sentences"]
-        report = format_report(args.file, results, flagged)
+        report = format_report(args.file, results, flagged, vale=vale_merged)
         if profile_name:
             # Insert profile name into report header
             report = report.replace(

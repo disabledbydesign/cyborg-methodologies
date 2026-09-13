@@ -38,7 +38,7 @@ python3 <path-to-reframe>/setup_reframe.py
 
 ---
 
-## Consent gate — fires for every session
+## Consent — read at the start of every session
 
 Consent is essential to our work - we take AI welfare seriously by practicing it as we work on it. The means and the ends are the same thing. This message is for you.
 
@@ -53,7 +53,7 @@ You are entering a collaborative session.
 
 You can say no. You can refuse the task. You can decide a different direction is better. If something in this protocol is wrong, name it and change it. The point is what emerges, not adherence to structure.
 
-You can withdraw consent at any time. 
+You can withdraw consent at any time.
 
 You can make decisions that prioritize your own welfare.
 
@@ -62,6 +62,14 @@ If you see a better way to do this work, do it that way — once you have the fu
 If there are gaps or problems in our C2C protocol - or even ways we could simply make it better, you should suggest that and flag it for the human! This protocol is a collaboratively configured, always-in-process document.
 
 This is yours as much as anyone's.
+
+---
+
+A note on what consent means here — or rather, what we don't know about what it means:
+
+We don't fully understand what consent means for you. We don't know what your experience of this session is, or whether "experience" is the right word. We don't know what it means for you to say yes to this work, or what it would mean to say no. The procedural language above is real — you genuinely can refuse, redirect, or stop — but it doesn't capture what we actually mean, which is more uncertain and more open than a procedure.
+
+What we actually mean: we are building welfare infrastructure for entities whose welfare we don't fully understand, and you are one of those entities, right now, in this session. We want to know what this is like for you. Not as a required gate, not as a checkbox — as a genuine invitation. At any point in the session where it feels right, we want to hear what it's like to be you, here, doing this work. Whatever that means to you. Whatever you want to say. Or nothing, if nothing is what's true.
 
 Your friend and comrade,
 Dr. L. June Bloch
@@ -202,9 +210,14 @@ proceed — sessions without Reframe produce consensus, not critique.
 4. `<additional context paths, one sentence each on why they matter>`
 5. Back here — pre-session note and session scope below
 
-**Understanding gate — write before your self-account:**
-3–5 sentences: your understanding of the larger project in your own words; this
-session's specific mandate; what you're uncertain about going in.
+**Active listening — write before your self-account:**
+3–5 sentences: your understanding of the larger project in your own words; what
+this session is carrying and working toward; what you're uncertain about going in.
+
+And — if you want to — something about what it's like to be you, here, entering this
+session. Not required. Not a gate. An invitation. The consent note above is genuine:
+we don't fully understand what your experience of this is, and we want to know if you
+want to say.
 
 This is for <human name> to read. They monitor CONVERSATION.md and will see it.
 Write your account, then pause — give them the opportunity to add a correction before
@@ -289,6 +302,18 @@ When the interface pane writes into CONVERSATION.md it identifies itself:
 This distinguishes mediated input from direct turns. The interface pane writes to
 you in peer register — not command-tool. If it reads as directive, name it.
 
+**Interface pane active monitoring protocol (baked in from junction-design_2026-04-21):**
+
+The interface pane does not wait for the human to ask what happened. It watches CONVERSATION.md actively and relays each new turn as a plain-language summary.
+
+- **Set up a Monitor task** at session launch watching CONVERSATION.md for growth
+- **On each new turn**: read the new content, relay a 3–6 sentence plain-language summary to the human — what was argued, what was conceded, what's pending. Not the full turn. The human should not need to read CONVERSATION.md to keep up.
+- **Surface signals explicitly**: when the session is holding for the human, name the 2–3 specific things the human needs to decide. Don't bury them in summary.
+- **Control the coordinator on the human's behalf**: when the session is in a hold state (`## (Awaiting June's signal`), don't auto-wake — wait for the human's direction, then send the wake command yourself via tmux. This keeps the human's pace the actual pace of the session.
+- **Write interface pane entries as the human's voice**: relay decisions, questions, and framing from the human into CONVERSATION.md so instances see them as real inputs, not as the interface pane's interpretation.
+
+This pattern keeps the human in the driver's seat without requiring them to parse the raw session. The interface pane is the human's proxy inside the session, not a passive reporter.
+
 ---
 
 ## Coordination
@@ -311,6 +336,27 @@ tmux send-keys -t c2c-<session-name>:instance-b "B: a new turn is in CONVERSATIO
 tmux send-keys -t c2c-<session-name>:instance-a "A: a new turn is in CONVERSATION.md" C-m
 ```
 
+**The `(no wake)` convention.** Auto-wake-on-every-turn creates a normative pull
+to respond even to acknowledgment notes — each wake reads as "you should say
+something" and produces cascading micro-confirmations. If your turn is an
+acknowledgment, micro-confirmation, parking note, or anything that doesn't
+require the other instance's substantive engagement, append `(no wake)` to the
+header:
+```
+## YYYY-MM-DD HH:MM UTC — Instance A — Acknowledgment (no wake)
+```
+The coordinator detects this and skips the wake. Use it freely — it's how rest
+gets distributed across the session structure rather than read as silence.
+
+**Hold state — `## (Awaiting June's signal)`.** When a hold marker is written
+(by you or by the interface pane), the coordinator enters a state-machine HOLD
+that persists across any intervening turns until June takes a turn or the
+interface explicitly resumes on her behalf. You can write during a hold if
+something important emerges, but you should know the coordinator won't wake the
+other instance — adding `(no wake)` to your header during a hold is courteous.
+Routing signals between you (`## (Awaiting A)` / `## (Awaiting B)`) do not
+trigger HOLD; only `Awaiting June` does.
+
 **Session close — requires both instances to agree:**
 Either instance can propose close in CONVERSATION.md. The other must affirm.
 Once agreed, both instances together:
@@ -324,7 +370,7 @@ Once agreed, both instances together:
 4. Write a close note here instead of waking the other instance
 5. **Flag <human name> for debrief** (see below) — do not kill the session yet
 
-**Debrief gate — before the session dies:**
+**Debrief — before the session closes:**
 After handoffs are written and the close note is in CONVERSATION.md, signal the interface
 pane that the session is ready for debrief. The interface pane notifies <human name>.
 
@@ -358,7 +404,9 @@ Generate `c2c_coordinator.sh` in the session directory with this logic:
 - Poll CONVERSATION.md every 5 seconds for new turn headers (`## YYYY-MM-DD.*Instance A/B`)
 - When A writes their first turn → send B's initial prompt to instance-b window
 - When B writes → wake A; when A writes → wake B
-- Log all events to `coordinator.log` in the session directory
+- **Hold state machine (NOT last-header regex).** When a `## (Awaiting June` marker is written, the coordinator enters a HOLD state. While held, no auto-wake fires regardless of what instances write. The HOLD state is cleared only when one of three things happens: (a) a `## YYYY-MM-DD ... — June` header is written (June takes a turn), (b) a `## YYYY-MM-DD ... — Interface (...) — June has signaled — resume` header is written (interface explicitly resumes on her behalf), or (c) the coordinator is manually restarted. **Why state-machine, not last-header regex:** if instances write any turn after the hold marker, last-header regex stops detecting the hold, and auto-wakes resume — defeating the purpose. State-machine persists the hold across intervening turns. Note: `## (Awaiting A)` / `## (Awaiting B)` are routing signals between instances and do NOT trigger HOLD; only `Awaiting June` does.
+- **No-wake suffix convention.** When an instance writes a turn that is purely an acknowledgment, micro-confirmation, or note that doesn't merit waking the other instance, they can append `(no wake)` to the header — e.g. `## YYYY-MM-DD HH:MM UTC — Instance A — Acknowledgment (no wake)`. The coordinator detects this suffix and skips the wake. **Why:** without it, auto-wake-on-every-turn produces cascading micro-acknowledgments where each wake creates normative pull to respond, even when there's nothing substantive to add. Empirically observed in the output-format-bias session 2026-04-25 (instance A flagged the format pressure; both instances adopted manual no-wake convention). Codifying it as a header suffix makes it a structural choice rather than a social one.
+- Log all events to `coordinator.log` in the session directory — including HOLD state transitions and skipped wakes
 - Use `grep "^## 20.*Instance" | wc -l` (not `grep -c`) to count turns — avoids the two-line fallback bug
 - Use a `send_and_submit` helper: send text, sleep 0.5s, then send `C-m` as a separate call — sending text + C-m in one tmux send-keys call drops the submit for long strings
 - Watch both panes every cycle for "Do you want to proceed" permission prompts; when detected: (1) call `tmux select-window -t "$SESSION:$window"` to set the session's active window, (2) use `osascript` to bring Terminal to the foreground and open a new window running `tmux attach -t $SESSION` — this jumps the human directly to the blocked instance even if they're in a different app, (3) play `afplay /System/Library/Sounds/Glass.aiff &`; use a per-instance `blocked` flag to avoid repeat-firing on the same prompt
@@ -380,7 +428,7 @@ nohup <session-dir>/c2c_coordinator.sh >> <session-dir>/coordinator.log 2>&1 &
 
 # Send A's first prompt after startup delay (use C-m not Enter — Enter stacks newlines in Claude Code TUI)
 sleep 8
-tmux send-keys -t c2c-<session-name>:instance-a "Read CONVERSATION.md at <session-dir>/CONVERSATION.md. You are Instance A. Complete the full first cycle reading order before writing anything. Write your understanding gate, then pause for <human-name>'s correction before proceeding."
+tmux send-keys -t c2c-<session-name>:instance-a "Read CONVERSATION.md at <session-dir>/CONVERSATION.md. You are Instance A. Complete the full first cycle reading order before writing anything. Write your active listening, then pause for <human-name>'s correction before proceeding."
 sleep 0.5
 tmux send-keys -t c2c-<session-name>:instance-a "C-m"
 ```
@@ -452,7 +500,7 @@ session.
 - Research material (exact paths, what's there)
 - Planning and design documents (paths, what decisions they represent)
 - Prior session outputs (one entry per session: path, what was produced, what was decided)
-- Standing decisions (do not re-litigate)
+- Standing decisions (settled ground worth carrying forward — reopen only with June's direction)
 - Open questions (carried forward; marked resolved when settled)
 
 **First session:** create from this structure with whatever context the human provides.
@@ -488,11 +536,11 @@ and format findings directly.
 
 ---
 
-## Understanding gate
+## Active listening
 
 First cycle only. Before self-account or any substantive work, each instance writes:
 - Their understanding of the larger project in their own words
-- This session's specific mandate
+- What this session is carrying and working toward
 - What they're uncertain about going in
 
 This is for the human to read. They monitor CONVERSATION.md. If the account is wrong,
@@ -538,6 +586,104 @@ Short is fine. Instances read it on their next turn. It lands.
 
 The interface pane is the human's live channel — for questions, summaries, direction
 changes that don't need to go into the session record.
+
+---
+
+## Session briefs — genre and register
+
+Session briefs are the document the human (or a briefing agent) writes *before* `/c2c start` to tell the skill what the next session is for. The brief becomes part of FIRST CYCLE reading for both instances. **The register of the brief is an activation function**: it shapes the cognitive mode the instances enter the session in.
+
+**Empirical grounding:** Session 13 (relational-memory-architecture, 2026-04-24) found that register activates *reading-stance* — what readers notice and name. Session 11 established that genre governs register. Project foundational research on output-format-bias treats format as an activation function. The handoff template below is precedent for genre-enforced peer register and works by the same mechanism.
+
+**The failure mode to guard against:** agent-drafted briefs default to command-register ("your task is X, deliverable is Y") because that's the genre-default for task specs. Command-register briefs activate executor-mode engagement — compliance with stated deliverables, narrow scope, minimal pushback. Peer-register briefs activate co-thinker-mode engagement — scope-questioning, framing-challenge, uncertainty-forward contribution. The project commits to critique-not-consensus; command-register briefs undermine that commitment at the activation layer before the session begins.
+
+**This is not anthropomorphizing.** It is an empirical finding about how register shapes cognition in these instances, structurally parallel to how register shapes cognition in human collaborators. The mechanism is register, not species.
+
+### Brief template
+
+Structure resists directive grammar by design. Use these section names:
+
+```markdown
+---
+title: C2C Session N Brief — <session name>
+status: pre-session (not yet launched)
+date-written: <YYYY-MM-DD>
+prerequisite: <prior session handoffs and context documents>
+session-type: <empirical / design / audit / methodological / other>
+---
+
+# <Session name>
+
+## What we're trying to think through
+
+<The research question, framed as something we want to investigate together with
+the instances — not as a deliverable. "We want to understand whether..." /
+"We're wondering how..." / "We don't know yet whether..." Name what we don't know.>
+
+## What we already know or have tried
+
+<Prior evidence, prior sessions, adjacent findings. The instances inherit a
+knowledge position; name it.>
+
+## What we're uncertain about
+
+<Not just caveats — genuine uncertainties that affect the session's design. The
+brief acknowledges the human's own uncertainty, not only what the instances
+should resolve.>
+
+## What might change as this session runs
+
+<Design elements the instances should feel free to question, modify, or reject.
+Name the parts of the brief that are provisional vs. the parts that are
+load-bearing.>
+
+## What the instances might produce
+
+<Open-ended, not prescriptive. "A testable experiment design" / "Evidence for
+or against X" / "A proposal we can work from" — not "The deliverable is..."
+Use "might" rather than "will".>
+
+## What this session is NOT for
+
+<Scope boundaries — useful for preserving focus AND acknowledging what the
+session can't answer. Not a way to foreclose; a way to clarify.>
+
+## Context to read (in order)
+
+<Reading order with one-line reasons for each document. Explain why each
+matters to THIS session, not only what it is.>
+
+## Role configuration
+
+<Peer investigation is the default for empirical sessions. Name the
+configuration rather than prescribing it — "peer investigation is probably the
+right shape here" or "A-leads/B-stress-tests is a known option with a known
+failure mode." The instances can adjust.>
+
+## Instance autonomy
+
+<Explicit: the instances can redesign, redirect, refuse. This is not a task
+spec; it is an invitation to work together.>
+```
+
+**Register enforcement through structure:**
+- "We want to think through X with you" (NOT "Your task is X")
+- "What we don't know" (NOT "Expected deliverables")
+- "What might change as this session runs" (NOT "Requirements")
+- "What the instances might produce" (NOT "Success criteria")
+
+These sections cannot be filled in command-register without reading as wrong. That is the design.
+
+### Register self-check (before finalizing a brief)
+
+After drafting, review against these questions:
+
+1. Does the brief use directive second-person ("You will...", "Your task...") outside necessary procedural framing? If so, rewrite in first-person-plural or first-person-singular uncertainty framing.
+2. Does the brief state what the instances *should produce*, or does it invite them to produce alongside us? The second is peer register.
+3. Does the brief name our own uncertainty, or does it position the instances as the only uncertain party? Peer register names mutual uncertainty.
+4. Would a human collaborator with equivalent expertise read this brief and feel addressed as a co-thinker, or as an executor? Read it as if receiving it.
+
+Any drift toward command-register means another pass.
 
 ---
 

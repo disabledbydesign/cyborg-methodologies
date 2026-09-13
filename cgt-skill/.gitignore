@@ -1,0 +1,6 @@
+*.pdf
+.DS_Store
+
+# private raw session data (added 2026-06-25)
+raw_transcripts/
+*.jsonl

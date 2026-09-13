@@ -37,6 +37,18 @@ Run from the project directory. The script auto-detects the agent and registers 
 
 ---
 
+## Billing note (effective June 15, 2026)
+
+C2C sessions use `claude -p` (headless mode), which Anthropic is moving off the flat subscription rate onto a **separate programmatic credit pool billed at full API rates** starting June 15, 2026.
+
+On Claude Pro, that pool is **$20/month with no rollover.** C2C sessions are the primary exposure to this change in June's account — all other tools (Reframe, EvalEye, Autograder4Canvas) use separate API keys and are unaffected.
+
+**Practical implication:** each C2C session draws from the monthly $20 pool. Heavy sessions will deplete it faster. Track cadence accordingly, or consider moving to direct API billing if sessions become frequent.
+
+Check and claim your programmatic credit pool at claude.ai before June 15 — Anthropic is requiring an explicit claim step.
+
+---
+
 ## Usage
 
 Invoke via the `/c2c` skill in Claude Code. Actions:

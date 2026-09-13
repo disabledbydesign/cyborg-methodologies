@@ -1,8 +1,11 @@
 ---
 name: voice-check
-description: "Voice integration for human-AI collaborative writing. Maintains a sociolinguistic voice profile that agents use as a style guide during drafting, as a contamination linter, and as a learning loop that improves from human revision patterns. Run /voice-check setup to create a profile from writing samples. Run /voice-check learn after a revision session to update the profile."
+description: "Voice integration for human-AI collaborative writing. Maintains a sociolinguistic voice profile that agents read BEFORE drafting (style guide that shapes what gets written) AND self-run AFTER drafting (contamination linter), plus a learning loop that improves the profile from human revision patterns. Both the pre-draft read and the post-draft check are first-class uses — voice-check is not a post-only tool. Run /voice-check setup to create a profile from writing samples. Run /voice-check learn after a revision session to update the profile."
 user_invocable: true
-trigger: /voice-check, /writing-check, or when user asks to check a draft's voice
+trigger: |
+  Invoke BEFORE drafting voice-carrying material for the user (READMEs, portfolio copy, fieldnotes, touchstones, social media, application materials, anything written in the user's voice for an external audience) — load the profile plus the matched genre overlay, then draft in voice.
+  Invoke AFTER drafting to run the contamination linter on the produced text.
+  Also invoke when the user runs /voice-check, /writing-check, or asks to check a draft's voice.
 ---
 
 # Voice Check — Agent Voice Integration
@@ -117,7 +120,8 @@ For depth on what this routes against, see the cyborg-methodologies memos: `cgt-
 
    **Role filter on `qualitative[]`** — each check carries a `role` field; filter to what's load-bearing for the work in front of you:
    - **`role: "pre_draft"`** — principles that shape what gets written. **Read these in full before drafting.** This is the in-flight reference set (~30 checks; ~10K tokens).
-   - **`role: "linter"`** — pattern/threshold rules fired automatically by the script. Don't read manually.
+   - **`role: "revision_pass"`** — *(added 2026-08-07)* judgment work an agent performs **during revision**: restructuring, deep compression, re-sequencing. **Read these when revising, not when drafting.** Not script-firable — these require a model to execute, and no regex can do them. This role exists because the taxonomy previously had no home for agent-executed revision work: everything was either read-before-drafting, script-fired, learning-loop, or rare-situational. `williams_diagnostic_restructure` had been filed under `linter` for want of anywhere better, which meant the script never fired it (it can't) and agents were told not to read it. It was invisible to the entire system. If a check describes work a model must do and a script cannot, it belongs here.
+   - **`role: "linter"`** — pattern/threshold rules fired automatically by the script. Don't read manually. ⚠ Genuinely mechanical rules only. If you find yourself tagging something `linter` because it doesn't fit elsewhere, it is probably `revision_pass`.
    - **`role: "cda_sweep"`** — prompts for the learning loop's qualitative phase. Read only when running `--learn`.
    - **`role: "diagnostic"`** — rare situational flags. Read when triggered.
 
@@ -131,6 +135,10 @@ For depth on what this routes against, see the cyborg-methodologies memos: `cgt-
    - `stylometry.style_notes` — plain-language summary of the writer's voice fingerprint
    - `theoretical_anchors` (if present) — frameworks the checks draw from. See step 3.5.
    - `patterns` — anti-pattern lists tell you what words are contamination signals (the script catches these post-draft, but recognizing them while drafting prevents the contamination)
+   - **The moves library — `~/.claude/skills/voice-check/moves/`.** Added to this list 2026-08-07; the directory had existed since April and nothing in this skill pointed at it, so the moves were written and then never read. Each file states its scope in a `**Genres:**` header line.
+     - **Files tagged `ALL`** are universal craft moves — Williams' given/new contract, topic placement, de-nominalization, the throat-clearing deletion test, concision. **Read these before drafting anything, in any genre.** They are the operationalization of the Williams anchor named in step 3.5: the anchor tells you the framework exists, these tell you what to do with it. (Five were tagged `gra-memory-creation` until 2026-08-07 because they happened to be written during that genre build — a scoping accident, not a judgment that they were project-specific. June: *"Williams style craft should be for ALL writing."*)
+     - **Files tagged with specific genres** apply only when drafting that genre. Skip the rest, on the same logic as the genre filter above.
+     - A move file carries the *reasoning* behind a craft rule, which a one-line profile check cannot. Where a `qualitative` check and a move file cover the same ground, the move file is the fuller account.
 
 3.5. **Activate theoretical anchors.** If the profile has a `theoretical_anchors` field, it lists scholarly frameworks the qualitative checks operationalize (e.g., Martin & White's Appraisal Theory, Williams's *Style: Lessons in Clarity and Grace*, Halliday's Systemic Functional Linguistics). Each anchor includes a `for_fresh_agents` field with a short briefing on the framework. **Before drafting, briefly review your training data on each named anchor.** The qualitative checks are operationalizations of these frameworks — activating the frameworks gives you context the individual check instructions cannot fully convey.
 
@@ -151,6 +159,14 @@ For depth on what this routes against, see the cyborg-methodologies memos: `cgt-
    python3 ~/.claude/skills/voice-check/writing_check.py DRAFT_PATH --genre GENRE_NAME
    ```
    The script auto-discovers the user's profile if only one exists. Use `--profile PATH` to specify if multiple profiles exist. If `--genre` is specified and the genre defines a `word_count_target`, that target is used automatically.
+
+   **The same command also runs Vale**, if Vale is installed and a `.vale.ini` sits anywhere above the draft. Its findings arrive in a `MECHANICAL RULES (Vale)` section of the same report — one command, two engines. Nothing extra to invoke. If Vale is missing the report says so in one line and everything else runs normally.
+
+   What each engine owns, and why the line falls where it does: **Vale checks whether a fixed string or a fixed syntactic shape is present** (copular/cleft constructions, nominalizations, forbidden claims, hedges, corporate register). **voice-check owns everything with a number attached** — counts measured against a threshold, stylometric distance from the corpus centroid, the genre overlays, the learning loop, and the qualitative checks that are prompts for a model. The reason is structural, not philosophical: Vale rules are static files selected by file glob, and voice-check thresholds change per genre (`hedge_max` is 0 for a tech cover letter and 4 for a research paper). Vale cannot see which genre a draft is being written in, because the genre is an argument to this script, not a property of the path.
+
+   So when a Vale rule hard-codes a threshold voice-check also measures, the report suppresses Vale's copy and says so. Findings the profile lexicons already produced are likewise suppressed rather than printed twice. Vale alerts are counted separately in the summary and are never folded into the flag arithmetic, which is calibrated against the user's corpus.
+
+   Useful flags: `--no-vale` skips the pass; `--vale-config PATH` overrides config discovery; `--vale-audit` reports which of the profile's pattern lexicons the Vale rules do **not** cover. Run `--vale-audit` after the learning loop adds patterns to a profile — the profile grows and the static rule files do not, and that audit is the only thing that notices.
 
 6. **Self-correct contamination silently.** If the check flags voice contamination (hedge words, corporate jargon, narrative padding, self-aggrandizing frames, product-description appositives), fix them before presenting the draft. These are binary contamination signals — "leveraging" is wrong in any voice. Do not tell the user you found and fixed contamination. Just present clean text.
 
@@ -189,7 +205,15 @@ For depth on what this routes against, see the cyborg-methodologies memos: `cgt-
 
    **Workflow note for structural vs. local revisions.** When the diff pattern is `STRUCTURAL`, weight sentence-level signals lower in the qualitative analysis — they often reflect collateral damage from reorganization, not deliberate voice choices. Fine-grained refinement passes carry the strongest voice signal at the sentence level. The optional `--notes` flag lets the user tag the run's intent ("structural pass," "fine-grained finalization," etc.) so the agent reads the signals in context.
 
-   **Save the agent's first draft to a temp file before beginning the revision conversation.** You need both versions for the learning loop.
+   **v0/v1 auto-copy — run immediately after producing the first draft, before the revision conversation starts:**
+   ```bash
+   cp [doctype].md [doctype]_v0.md && cp [doctype]_v0.md [doctype]_v1.md
+   ```
+   Example: `cp cover_letter.md cover_letter_v0.md && cp cover_letter_v0.md cover_letter_v1.md`
+
+   v0 = raw agent output, never modified. v1 = working copy for the revision conversation. The learning loop's signal is the gap between v0 and the final submitted version — that's what teaches the profile what the agent got wrong at the sentence level. If v0 is missing and June has already revised v1, the baseline is contaminated.
+
+   **HTML-final sync:** If June makes final sentence-level edits in the HTML before exporting to PDF, sync those back to markdown before running the learning loop. Save as `[doctype]_final.md` by extracting the body text. The loop always uses `.md` — stale markdown means missing exactly the fine-grained pairs that carry the most voice signal.
 
    **Standalone tools:**
    - `--diff FIRST FINAL` — runs only the structural diff (no profile update). Useful for inspecting version pairs before deciding whether to run the full loop.

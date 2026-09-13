@@ -86,7 +86,7 @@ Generates the session directory and CONVERSATION.md from a prior handoff and con
 
 ```
 <project>/c2c/c2c_sessions/<session-name>_<YYYY-MM-DD>/
-├── CONVERSATION.md    ← context map ref + read-order + understanding gate + coordination + pre-session note
+├── CONVERSATION.md    ← context map ref + read-order + active listening + coordination + pre-session note
 ├── LAUNCH.md          ← launch commands + checkpoint protocol
 ├── artifacts/
 └── logs/
@@ -155,7 +155,7 @@ questions — read `PROJECT_CONTEXT_MAP.md` first (step 1 in FIRST CYCLE below).
    [add entries for each context document provided]
 4. Back here — pre-session note and session scope below
 
-**Understanding gate — write before your self-account:**
+**Active listening — write before your self-account:**
 3–5 sentences: your understanding of the larger project in your own words; this session's
 specific mandate; what you're uncertain about going in.
 
@@ -349,7 +349,7 @@ Each project using C2C should maintain a `PROJECT_CONTEXT_MAP.md` at `<project-r
 
 ---
 
-## Understanding gate — first cycle only
+## Active listening — first cycle only
 
 At the start of every session, before the self-account or any design/stress-test work, each instance writes an understanding statement (3–5 sentences):
 - Their understanding of the larger project in their own words — not paraphrasing the prompt

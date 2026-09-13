@@ -1,0 +1,202 @@
+{
+  "runs": [
+    {
+      "timestamp": "2026-07-05T17:17:04",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:07",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:08",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:11",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:13",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:15",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:18",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:20",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:23",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:24",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T17:17:31",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:10",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:12",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:13",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:14",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:16",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:18",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:19",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:21",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:23",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:23",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    },
+    {
+      "timestamp": "2026-07-05T18:42:28",
+      "command": "--learn",
+      "files": [
+        "first_draft.md",
+        "final_draft.md"
+      ],
+      "cited_check_ids": []
+    }
+  ]
+}

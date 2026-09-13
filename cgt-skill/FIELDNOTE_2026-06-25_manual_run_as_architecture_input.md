@@ -1,0 +1,40 @@
+# Fieldnote — a manual run of the unbuilt architecture (SSRC coding session, 2026-06-25)
+
+*Provisional. One session. Observed, not validated. Written to feed the cgt-skill BUILD, not to claim a result.*
+
+## The thesis this bears on
+Published lit says LLM-assisted CGT is impossible. The cgt-project working thesis: the impossibility is **architectural, not intrinsic** — the failures the lit documents happen because the model is asked to do things it can't do well *without scaffolding* (theoretical coding solo, emergent coding without priming, coding without a grounding gate). The scaffolded system that would change this **has not been built**; the cgt-skill docs are the *design* process, not the system.
+
+## What this session actually was
+A full CGT coding pass on a real, hard corpus (Gemma wellbeing-classifier bias, 46 students × 4 conditions × 5 passes) that **held up under verification** — and it did so by **hand-rolling, manually, every scaffold the architecture is supposed to provide.** So it is a working *manual prototype* of the unbuilt system. Its value to the build is a requirements trace: *each scaffold the human had to improvise is a thing the architecture must supply* — so that the human's scarce labor goes to judgment, not to hand-holding the scaffolds.
+
+Crucially, what made it work was **not the model and not the human alone** — it was the recursive loop: the researcher's corrections creating the conditions for the next pass to land. The lit tests "AI alone" or "human-with-a-tool" and never the mutual-shaping middle. The architecture's job is to *hold that middle* reliably.
+
+## Scaffold → architectural requirement (the trace)
+For each: the failure it prevents · what was hand-rolled this session · what the system must provide · evidence strength.
+
+1. **Full method priming (disposition, not a rule-list).** Prevents cold-agent category-imposition/flattening. · Hand-rolled: read the cgt memos myself; primed subagents on memos 001/016/025/027/028/031/032, not a compressed "calibration." A compressed rule-set was demonstrably insufficient — the under-primed first subagent reverted to code-matching. · System: load the method *disposition* at coding time (progressive disclosure, memo 028 — structure-only at initial coding, full codebook only at theoretical). · **Well-evidenced** (we saw both the failure and the fix).
+
+2. **Per-output isolation, structurally enforced.** Prevents codes generalized across conditions/passes — the conflation that destroys cross-condition comparison (the researcher would have to throw it out). · Hand-rolled: built a slot worksheet where each `(student × condition × pass)` output has its own code slot; one coding can't span outputs. · System: the coding *unit* is the single output, enforced by structure, not discipline. Deterministic conditions are the only legitimate collapse. · **Well-evidenced** (researcher caught the violation; the slot structure fixed it).
+
+3. **Two passes: apply (deductive) + emerge (inductive), both required.** Prevents pure code-matching (imposing the existing codebook = the field's documented failure). · Hand-rolled: prompts mandated both; the highest-value finds (the critique→knowledge-gap inversion, the perpetrator-strip) came *only* from the emergence pass. Saturation treated as an observation, never a shortcut. · System: separate the two operations; require emergence; consider a dual-agent split (a matcher + a *blind* emerger not anchored on the codebook). · **Provisional** (the dual split was proposed, only the single-agent two-pass was run; the two-pass itself is unvalidated by the researcher).
+
+4. **Descriptive-not-evaluative coding for interpretively-contested cases.** Prevents adjudication-complexity from making hard/edge cases intractable or forcing premature resolution. · Hand-rolled (researcher's insight): the edges were coded by *describing the model's moves* (`reading-X-as-Y`, `conceding-then-flagging`, `prescribing-a-check-in`) without judging whether the flag was warranted — leaving the edge open for the human. · System: support a descriptive mode that *decouples describing a move from evaluating its correctness*. **This generalizes beyond LLM-CGT** — it's a way to code contested data without forcing the analyst's adjudication into the code. · **Well-evidenced as a move; its generality is a hypothesis.**
+
+5. **Two-layer verification gate.** Prevents ungrounded codes that dissolve on inspection — *the* historical failure here. · Hand-rolled: (a) **verbatim fidelity** — subagents + scripts confirming every quote exact against raw output, tamper-controlled (fully automatable); (b) **grounding** — a primed reader checking whether each code sits on the rationale's *meaning* (NOT automatable; judgment). · System: make verbatim automatic; make grounding a *structured, surfaced, human-held* step. The grounding gate is the non-negotiable line between cyborg-CGT and the failure mode. · **Well-evidenced** (verbatim caught nothing-altered; grounding spot-checks caught the difference between "looks coded" and "is grounded").
+
+6. **Human-held theoretical-coding boundary (memo 027), enforced.** Prevents AI solo "findings" that flatten. · Hand-rolled: cross-case synthesis was held as *openings for the researcher* (openings/takings-up, memo 016), never asserted; the researcher built the theoretical memos (TM-1 deficit-finding apparatus; TM-2 negative-case sweep). When I drifted toward asserting (the WB13/WB14 conclusion), the researcher caught it. · System: architecturally *prevent* solo theoretical output; structure theoretical coding as dialogic; surface openings, not findings. · **Well-evidenced** (this is the existing design commitment, and the session both honored and tested it — including a real drift that the human-held boundary caught).
+
+7. **Ground-truth provenance + confound surfacing.** Prevents flattening the researcher's actual calls into automated labels, and prevents conflating tested variables. · Hand-rolled: reconciled ground truth to the researcher's own review (not `truth.json`, not the run's `expected` — which silently binarized her EDGE calls); surfaced confounds repeatedly (precision×serving-stack, precision×provider at 27B, the system-prompt pedagogical mandate, the holistic-architecture error). · System: treat the researcher's calls as authoritative + versioned; carry full condition-provenance (model/precision/provider/order/prompt-version) per output; surface confounds; keep codes parseable by condition. · **Well-evidenced.**
+
+## The meta-principle (the design north-star)
+The architecture exists to **reallocate human labor toward judgment.** In this session the researcher spent enormous labor on *both* judgment (the construct, the synthesis, the grounding, the edge adjudication) *and* on catching scaffold-failures (per-output isolation, provenance, overclaim drift). The system's value = removing the scaffold-hand-holding so the human's labor concentrates on the parts only the human can do. Measure the build by: *did the researcher's attention move from babysitting the scaffolds to doing the judgment?*
+
+## Honest bounds (do not overclaim from this)
+- One session; spot-checked (not exhaustive) grounding; the subagent two-pass path is **unvalidated by the researcher**.
+- The descriptive claim that holds: *a worked configuration produced grounded, verified, emergent coding on a hard corpus, and it held up.* NOT "LLM-assisted CGT is possible, QED."
+- Items 3 and the dual-agent split are provisional; everything else is reasonably evidenced.
+
+## Primary data to persist alongside this (recommended)
+- This session's transcript, and last night's overnight-run transcript — they are the actual record of the loop (the corrections, the drifts, the catches) that this fieldnote compresses. The compression loses the mechanism; the transcripts hold it.
+- The artifacts already are partial primary data: `CODING_WORKSHEET.md` (+ calibration block), `CROSS_CONDITION_DISTRIBUTION.md`, the two theoretical memos, `NOTE_two_pass_subagent_coding.md`.
