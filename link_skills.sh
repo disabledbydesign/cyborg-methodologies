@@ -114,6 +114,25 @@ for repo_skill in "$REPO"/*/; do
   fi
 done
 
+# Report the safety nets. --migrate never deletes: it moves the previous directory
+# aside as <name>.pre-link-<timestamp>. Those are the only way back from this
+# migration, and a note in a file would go stale the moment one is deleted — so
+# the list is read off the filesystem every run, and disappears by itself once
+# they are gone.
+backups="$(find "$SKILLS" -maxdepth 1 -name '*.pre-link-*' 2>/dev/null | sort)"
+if [ -n "$backups" ]; then
+  echo
+  echo "PRE-MIGRATION BACKUPS — the directories that were in service before linking:"
+  while IFS= read -r b; do
+    [ -z "$b" ] && continue
+    n="$(find "$b" -type f 2>/dev/null | wc -l | tr -d ' ')"
+    echo "  $(basename "$b")   (${n} files)"
+  done <<< "$backups"
+  echo "  Everything in them is in this repo or the private Job Search repo."
+  echo "  Keep them until the skills have run for real a few times. Deleting them"
+  echo "  is the one step of this migration that cannot be undone."
+fi
+
 echo
 echo "already linked: ${ALREADY}   linked now: ${LINKED}   blocked: ${BLOCKED}   pending: ${SKIPPED}"
 [ "$BLOCKED" -gt 0 ] && { echo "Resolve the blocked ones by hand — they hold work that exists nowhere else."; exit 1; }

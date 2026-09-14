@@ -122,6 +122,8 @@ cyborg-methodologies/
 
 **Skill directory**: `~/.claude/skills/<name>` is a symlink to this repo's `<name>/` — the whole directory, not file by file. One copy, one history, and an edit in either place is the same edit. `bash link_skills.sh` reports what each skill currently is; `--migrate` links the ones it can prove are safe. It refuses when the installed copy holds a file this repo lacks, because that file exists nowhere else; `bash rescue_skill.sh <name> --apply` brings those in first.
 
+**Missing something from a skill?** Read `MIGRATION_2026-09-13.md` before reconstructing it. Skills moved into this repo that day, and the pre-migration copies are still on disk — `bash link_skills.sh` lists them.
+
 **This repository is PUBLIC. Personal material lives in the private `Job Search` repo.**
 
 Method is shareable: the workflow, the personas, the prose moves, the tooling. A model of how June writes is not — `june_bloch.json`, its change log, audits of it, and extracts from it are built from her unpublished drafts. Those live in `Job Search/voice_profiles/` and are symlinked back where a tool names the path. See that folder's README.
