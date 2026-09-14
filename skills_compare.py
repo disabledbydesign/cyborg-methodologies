@@ -32,6 +32,7 @@ import hashlib
 import json
 import os
 import subprocess
+from datetime import datetime
 import sys
 from fnmatch import fnmatch
 from pathlib import Path
@@ -125,11 +126,41 @@ def gitignored(repo: Path, rels: list[str]) -> set[str]:
     return {l.strip() for l in out.stdout.splitlines() if l.strip()}
 
 
+# A differing file means two real versions and a person has to choose. But once
+# that person HAS chosen, nothing recorded it, so the same file blocked forever.
+# Both remaining blocks on 2026-09-14 were of exactly this kind: the repo held a
+# merge of the two versions and the installed copy was the stale input to it.
+#
+# So the choice gets written down — the sha256 of the installed content that was
+# superseded, not merely the path. Record the path alone and a later edit to the
+# installed file would inherit an approval it never earned; record the bytes and
+# the block returns the moment those bytes change.
+RESOLVED_LEDGER = ".skills-resolved.json"
+
+
+def load_resolutions(repo: Path, skill: str) -> dict[str, list[str]]:
+    ledger = repo / RESOLVED_LEDGER
+    if not ledger.exists():
+        # The ledger sits at the repo root; `repo` here is one skill directory.
+        ledger = repo.parent / RESOLVED_LEDGER
+    if not ledger.exists():
+        return {}
+    try:
+        data = json.loads(ledger.read_text())
+    except (OSError, ValueError):
+        return {}
+    out: dict[str, list[str]] = {}
+    for rel, entries in data.get(skill, {}).items():
+        out[rel] = [e["superseded_sha256"] for e in entries if "superseded_sha256" in e]
+    return out
+
+
 def compare(repo: Path, installed: Path) -> dict:
     repo_files, _ = walk(repo)
     inst_files, inst_total = walk(installed)
 
-    missing, differing, identical = [], [], []
+    resolutions = load_resolutions(repo, repo.name)
+    missing, differing, identical, resolved = [], [], [], []
     for rel, inst_path in sorted(inst_files.items()):
         repo_path = repo_files.get(rel)
         if repo_path is None:
@@ -138,6 +169,8 @@ def compare(repo: Path, installed: Path) -> dict:
             identical.append(rel)
         elif digest(repo_path) == digest(inst_path) and digest(inst_path) is not None:
             identical.append(rel)
+        elif digest(inst_path) in resolutions.get(rel, []):
+            resolved.append(rel)      # this exact installed content was superseded on purpose
         else:
             differing.append(rel)
 
@@ -150,11 +183,39 @@ def compare(repo: Path, installed: Path) -> dict:
         "missing": missing,          # only in the installed copy — safe to bring in
         "excluded": excluded,        # .gitignored here: belongs in the private workspace
         "differing": differing,      # two real versions — a person must choose
+        "resolved": resolved,        # a person already chose; the repo version won
         "identical": identical,
         "counted": len(inst_files),
         "total": inst_total,
         "ignored": inst_total - len(inst_files),
     }
+
+
+def record_resolution(repo: Path, installed: Path, note: str) -> int:
+    """Write down that the repo version of each differing file was chosen."""
+    result = compare(repo, installed)
+    if not result["differing"]:
+        print("nothing differing — nothing to resolve")
+        return 0
+    inst_files, _ = walk(installed)
+    ledger_path = (repo.parent if (repo.parent / RESOLVED_LEDGER).exists()
+                   or not (repo / RESOLVED_LEDGER).exists() else repo) / RESOLVED_LEDGER
+    data = {}
+    if ledger_path.exists():
+        try:
+            data = json.loads(ledger_path.read_text())
+        except ValueError:
+            data = {}
+    skill = data.setdefault(repo.name, {})
+    stamp = datetime.now().strftime("%Y-%m-%d")
+    for rel in result["differing"]:
+        entry = {"superseded_sha256": digest(inst_files[rel]), "date": stamp, "note": note}
+        skill.setdefault(rel, []).append(entry)
+        print(f"  resolved: {rel}")
+    ledger_path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    print(f"recorded in {ledger_path.name}: the repo version wins for "
+          f"{len(result['differing'])} file(s)")
+    return 0
 
 
 def main() -> int:
@@ -163,6 +224,9 @@ def main() -> int:
     ap.add_argument("repo", nargs="?", type=Path)
     ap.add_argument("installed", nargs="?", type=Path)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--resolve", action="store_true",
+                    help="record that the repo version of every differing file wins")
+    ap.add_argument("--note", help="why, in one line (required with --resolve)")
     ap.add_argument("--ignore-summary", action="store_true")
     args = ap.parse_args()
 
@@ -171,6 +235,11 @@ def main() -> int:
         return 0
     if not args.repo or not args.installed:
         ap.error("REPO_DIR and INSTALLED_DIR are required")
+
+    if args.resolve:
+        if not args.note:
+            ap.error("--resolve requires --note: a resolution with no reason is not a record")
+        return record_resolution(args.repo, args.installed, args.note)
 
     result = compare(args.repo, args.installed)
     if args.json:
@@ -184,6 +253,8 @@ def main() -> int:
             print(f"  differs:           {rel}")
         for rel in result["excluded"]:
             print(f"  excluded by repo:  {rel}")
+        for rel in result["resolved"]:
+            print(f"  already resolved:  {rel}")
     return 0
 
 

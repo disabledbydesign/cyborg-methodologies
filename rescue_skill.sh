@@ -17,6 +17,13 @@
 #   bash rescue_skill.sh voice-check           report; change nothing
 #   bash rescue_skill.sh voice-check --apply   copy the missing files in
 #   bash rescue_skill.sh --all --apply         every blocked skill
+#
+#   bash rescue_skill.sh voice-check --accept-repo --note "why"
+#       Record that the repo version of each differing file is the resolution.
+#       For when the reconciliation already happened — the repo holds a merge of
+#       both versions, say — and the installed copy is the stale input to it.
+#       Stored as the sha256 of the superseded content, so the block returns if
+#       that file changes again.
 
 set -euo pipefail
 
@@ -24,20 +31,27 @@ REPO="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd -P )"
 COMPARE="${REPO}/skills_compare.py"
 SKILLS="${SKILLS_DIR:-${HOME}/.claude/skills}"
 APPLY=0
+ACCEPT=0
+NOTE=""
 NAMES=()
 
 while [ $# -gt 0 ]; do
   case "$1" in
     --apply) APPLY=1 ;;
+    --accept-repo) ACCEPT=1 ;;
+    --note) NOTE="${2:-}"; shift ;;
     --all)   NAMES=(__ALL__) ;;
-    -h|--help) sed -n '1,21p' "$0"; exit 0 ;;
+    -h|--help) sed -n '1,29p' "$0"; exit 0 ;;
     -*) echo "unknown option: $1" >&2; exit 2 ;;
     *) NAMES+=("$1") ;;
   esac
   shift
 done
 
-[ ${#NAMES[@]} -gt 0 ] || { echo "usage: bash rescue_skill.sh <skill-name>... [--apply]" >&2; exit 2; }
+[ ${#NAMES[@]} -gt 0 ] || { echo "usage: bash rescue_skill.sh <skill-name>... [--apply | --accept-repo --note '...']" >&2; exit 2; }
+if [ "$ACCEPT" = 1 ] && [ -z "$NOTE" ]; then
+  echo "--accept-repo requires --note: a resolution with no reason is not a record" >&2; exit 2
+fi
 
 if [ "${NAMES[0]}" = "__ALL__" ]; then
   NAMES=()
@@ -70,6 +84,14 @@ for name in "${NAMES[@]}"; do
   fi
   if [ -L "$installed" ]; then echo "      already a symlink — nothing to rescue"; continue; fi
   if [ ! -d "$installed" ]; then echo "      no installed copy — nothing to rescue"; continue; fi
+
+  # --accept-repo: the differing files were already reconciled and the repo holds
+  # the result. Record the superseded content by hash so the block lifts for THESE
+  # bytes and returns the moment the installed file changes again.
+  if [ "$ACCEPT" = 1 ]; then
+    python3 "$COMPARE" "$target" "$installed" --resolve --note "$NOTE" | sed 's/^/      /'
+    continue
+  fi
 
   json="$(python3 "$COMPARE" "$target" "$installed" --json)"
   read_list() { printf '%s' "$json" | python3 -c "import json,sys;print('\n'.join(json.load(sys.stdin)['$1']))"; }

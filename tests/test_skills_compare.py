@@ -163,3 +163,50 @@ def test_exclusion_does_not_silence_a_real_difference(tmp_path: Path) -> None:
     r = compare(repo, inst)
     assert r["differing"] == ["secret.json"]
     assert r["excluded"] == []
+
+
+def test_a_recorded_resolution_lifts_the_block(tmp_path: Path) -> None:
+    """A differing file means two versions and a person must choose. Nothing
+    recorded that they HAD chosen, so the same file blocked forever — which is
+    what both remaining blocks were on 2026-09-14: the repo held a merge of the
+    two versions and the installed copy was the stale input to it."""
+    import subprocess as sp
+    repo, inst = pair(tmp_path)
+    (repo / "SKILL.md").write_text("merged, newer\n")
+    (inst / "SKILL.md").write_text("stale input\n")
+    assert compare(repo, inst)["differing"] == ["SKILL.md"]
+
+    r = sp.run([sys.executable, str(SCRIPT), str(repo), str(inst),
+                "--resolve", "--note", "merged both versions into the repo copy"],
+               capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+    after = compare(repo, inst)
+    assert after["differing"] == []
+    assert after["resolved"] == ["SKILL.md"]
+
+
+def test_the_block_returns_when_the_installed_file_changes_again(tmp_path: Path) -> None:
+    """The resolution records the superseded BYTES, not the path. Recording the
+    path alone would hand a later edit an approval it never earned."""
+    import subprocess as sp
+    repo, inst = pair(tmp_path)
+    (repo / "SKILL.md").write_text("merged\n")
+    (inst / "SKILL.md").write_text("stale\n")
+    sp.run([sys.executable, str(SCRIPT), str(repo), str(inst),
+            "--resolve", "--note", "merged"],
+           capture_output=True, text=True, check=True)
+    assert compare(repo, inst)["differing"] == []
+
+    (inst / "SKILL.md").write_text("someone edited it again\n")
+    assert compare(repo, inst)["differing"] == ["SKILL.md"]
+
+
+def test_a_resolution_requires_a_reason(tmp_path: Path) -> None:
+    import subprocess as sp
+    repo, inst = pair(tmp_path)
+    (repo / "SKILL.md").write_text("a\n")
+    (inst / "SKILL.md").write_text("b\n")
+    r = sp.run([sys.executable, str(SCRIPT), str(repo), str(inst), "--resolve"],
+               capture_output=True, text=True)
+    assert r.returncode != 0
+    assert "requires --note" in r.stderr
