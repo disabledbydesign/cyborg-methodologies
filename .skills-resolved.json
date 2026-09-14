@@ -1,0 +1,20 @@
+{
+  "discourse-analysis": {
+    "SKILL.md": [
+      {
+        "date": "2026-09-13",
+        "note": "repo holds the merge; installed copy is the stale input",
+        "superseded_sha256": "0c0663265c1d17aefaf54e87b687adcd72170ecf002e37e8760afc23392559a4"
+      }
+    ]
+  },
+  "voice-check": {
+    "citation_log.json": [
+      {
+        "date": "2026-09-13",
+        "note": "repo holds the merge; installed copy is the stale input",
+        "superseded_sha256": "d6ea17e3305d0957333fe665acff5d4d96edf569474fe6589c34834cbf5140ad"
+      }
+    ]
+  }
+}
