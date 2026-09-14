@@ -119,7 +119,8 @@ def main() -> int:
             for pat, label in SECRETS:
                 if pat.search(line) and not SECRET_FALSE_POSITIVE.search(line):
                     secrets.append((rel, label))
-        if HOME_PATH.search(text):
+        # This file carries the pattern, so it always matches itself.
+        if rel != Path(__file__).name and HOME_PATH.search(text):
             home_paths.append(rel)
 
     if home_paths:

@@ -31,6 +31,7 @@ import argparse
 import hashlib
 import json
 import os
+import subprocess
 import sys
 from fnmatch import fnmatch
 from pathlib import Path
@@ -104,6 +105,26 @@ def same_file(a: Path, b: Path) -> bool:
         return False
 
 
+def gitignored(repo: Path, rels: list[str]) -> set[str]:
+    """Which of these destination paths would the repo refuse to track?
+
+    THE REPO'S .gitignore IS A DECISION, NOT AN ACCIDENT. On 2026-09-13 four files
+    were deliberately moved out of this public repository into the private
+    workspace and added to .gitignore. The next rescue copied three of them
+    straight back, because "the repo does not have this file" was true and the
+    reason it was true went unread. A rescue that cannot see the exclusion will
+    undo it on every run.
+    """
+    if not rels:
+        return set()
+    try:
+        out = subprocess.run(["git", "-C", str(repo), "check-ignore", "--stdin"],
+                             input="\n".join(rels), capture_output=True, text=True)
+    except OSError:
+        return set()
+    return {l.strip() for l in out.stdout.splitlines() if l.strip()}
+
+
 def compare(repo: Path, installed: Path) -> dict:
     repo_files, _ = walk(repo)
     inst_files, inst_total = walk(installed)
@@ -120,8 +141,14 @@ def compare(repo: Path, installed: Path) -> dict:
         else:
             differing.append(rel)
 
+    # Split what the repo lacks from what the repo REFUSES. The second is not a gap
+    # to fill; it is a decision to respect, and the file belongs somewhere else.
+    excluded = sorted(gitignored(repo, missing))
+    missing = [m for m in missing if m not in set(excluded)]
+
     return {
         "missing": missing,          # only in the installed copy — safe to bring in
+        "excluded": excluded,        # .gitignored here: belongs in the private workspace
         "differing": differing,      # two real versions — a person must choose
         "identical": identical,
         "counted": len(inst_files),
@@ -155,6 +182,8 @@ def main() -> int:
             print(f"  only in installed: {rel}")
         for rel in result["differing"]:
             print(f"  differs:           {rel}")
+        for rel in result["excluded"]:
+            print(f"  excluded by repo:  {rel}")
     return 0
 
 

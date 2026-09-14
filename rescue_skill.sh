@@ -75,9 +75,17 @@ for name in "${NAMES[@]}"; do
   read_list() { printf '%s' "$json" | python3 -c "import json,sys;print('\n'.join(json.load(sys.stdin)['$1']))"; }
   missing="$(read_list missing)"
   differing="$(read_list differing)"
+  excluded="$(read_list excluded)"
   n_missing=0; [ -n "$missing" ] && n_missing=$(printf '%s\n' "$missing" | grep -c .)
   n_diff=0;    [ -n "$differing" ] && n_diff=$(printf '%s\n' "$differing" | grep -c .)
-  echo "      ${n_missing} file(s) only in ~/.claude, ${n_diff} file(s) differing"
+  n_excl=0;    [ -n "$excluded" ] && n_excl=$(printf '%s\n' "$excluded" | grep -c .)
+  echo "      ${n_missing} file(s) only in ~/.claude, ${n_diff} file(s) differing, ${n_excl} excluded by .gitignore"
+  if [ -n "$excluded" ]; then
+    while IFS= read -r f; do
+      [ -z "$f" ] && continue
+      echo "      — ${f}  (this repo excludes it on purpose; it belongs in the private workspace)"
+    done <<< "$excluded"
+  fi
 
   if [ -n "$missing" ]; then
     while IFS= read -r f; do

@@ -129,3 +129,37 @@ def test_a_broken_symlink_does_not_crash_the_comparison(tmp_path: Path) -> None:
     (inst / "gone.json").write_text("real\n")
     r = compare(repo, inst)
     assert "gone.json" in r["differing"]
+
+
+def test_a_gitignored_destination_is_excluded_not_missing(tmp_path: Path) -> None:
+    """THE RE-IMPORT BUG. Four files were deliberately moved out of the public repo
+    into the private workspace and added to .gitignore. The next rescue copied three
+    of them straight back: "the repo does not have this file" was true, and the
+    reason it was true went unread. A rescue that cannot see the exclusion undoes it
+    on every run."""
+    import subprocess as sp
+    repo, inst = pair(tmp_path)
+    sp.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text("TEST_B_PREDRAFT_EXTRACT.json\nAUDIT_REPORT_*.md\n")
+    (inst / "TEST_B_PREDRAFT_EXTRACT.json").write_text("33 of the profile's checks\n")
+    (inst / "AUDIT_REPORT_2026-05-06.md").write_text("audit\n")
+    (inst / "moves").mkdir()
+    (inst / "moves" / "point_first.md").write_text("# method\n")
+
+    r = compare(repo, inst)
+    assert r["missing"] == ["moves/point_first.md"]
+    assert r["excluded"] == ["AUDIT_REPORT_2026-05-06.md", "TEST_B_PREDRAFT_EXTRACT.json"]
+
+
+def test_exclusion_does_not_silence_a_real_difference(tmp_path: Path) -> None:
+    """A gitignored file that exists in BOTH places still has two versions, and the
+    person still has to choose. Only absence is reclassified."""
+    import subprocess as sp
+    repo, inst = pair(tmp_path)
+    sp.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / ".gitignore").write_text("secret.json\n")
+    (repo / "secret.json").write_text("repo version\n")
+    (inst / "secret.json").write_text("installed version\n")
+    r = compare(repo, inst)
+    assert r["differing"] == ["secret.json"]
+    assert r["excluded"] == []

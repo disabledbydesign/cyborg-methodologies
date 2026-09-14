@@ -45,20 +45,40 @@ When `/da` is invoked:
 - `/da corpus <dir>` → corpus mode
 - Natural language ("analyze this policy doc," "Fairclough this") → parse intent, proceed
 
-### Step 2: Run Quantitative Profile
+### Step 2: Load Project Context
 
-Run the Python script via Bash:
+Determine which project this analysis belongs to:
+1. Check `contexts/` for a context file whose `project-paths` comment matches the source file's directory
+2. If found → read it with the Read tool. This gives you: research questions, field context, accumulated findings, cultural coding decisions, coding patterns
+3. If not found → **PAUSE before proceeding to Step 3.** Context shapes framework selection, what counts as analytically significant, and how to handle ambiguous codings — setting it up first produces better analysis than retrofitting it after.
+
+   Present this prompt to the researcher:
+   ```
+   No project context found for this path. A few quick questions before we start —
+   answer any or all, or type "skip" to proceed without context:
+
+     1. What are you investigating? (research question or framing)
+     2. Field/community context? (who's speaking, to whom, from where)
+     3. Any prior coding decisions to carry in?
+   ```
+
+   - If the researcher provides answers → read `contexts/TEMPLATE.md`, create a context file at `contexts/[project-slug].md`, populate it with what was provided, save it, then proceed.
+   - If the researcher types "skip" → proceed without context. Do NOT offer to create it again after analysis unless the researcher brings it up.
+
+### Step 3: Run Quantitative Profile
+
+**Single-file mode:**
 ```
 python3 discourse_profile.py "<path>"
 ```
+
+**Corpus mode** (`/da corpus <dir>`): use the `--corpus` flag to get per-file profiles plus corpus baseline stats and outlier detection:
+```
+python3 discourse_profile.py --corpus "<dir>"
+```
+The output includes `corpus_stats` (mean and SD for each metric across all files) and an `outlier_summary` listing files that deviate ≥1.5 SD from the corpus mean on any metric. Use `outlier_summary` as your divergence-detection starting point — these files are candidates for explicit discussion in the analysis, but they are not the only source of analytically significant divergence (see Step 6).
+
 Capture JSON output from stdout. If the script fails (missing dependencies, bad input), warn the researcher and proceed with LLM-only analysis: "Quantitative profile unavailable — frequency counts will be approximate."
-
-### Step 3: Load Project Context
-
-Determine which project this analysis belongs to:
-1. Check `contexts/` (in this skill's directory) for a context file whose `project-paths` comment matches the source file's directory
-2. If found → read it with the Read tool. This gives you: research questions, field context, accumulated findings, cultural coding decisions, coding patterns
-3. If not found → after analysis, offer to create one
 
 ### Step 4: Read the Source Text
 
@@ -72,10 +92,38 @@ Auto-select based on genre and register, or follow the researcher's direction:
 - Interview transcript → Labov narrative, positioning, appraisal, membership categorization
 - Corporate/institutional → Fairclough 3D, legitimation, presupposition, referential chains
 - News → referential chains, presupposition, appraisal, argumentation
+- **Mixed corpus (multiple genres)** → Appraisal + Fairclough 3D as corpus-level defaults (both are register-agnostic and work across genre clusters). Offer per-cluster framework application as an optional deeper pass: "Individual genre clusters may warrant their own frameworks — e.g., Hyland stance for academic texts, Labov for interview transcripts. Want me to run a per-cluster pass?"
 
 If the researcher specifies frameworks ("Fairclough this," "focus on agency"), use those. If they invoke a preset ("for AI welfare"), read the preset file from `presets/`.
 
 Load selected framework files from `frameworks/` with the Read tool. These contain the analytical protocols.
+
+### Step 5b: Framework Confirmation Gate ⛔ PAUSE
+
+**This step is mandatory before Step 6. Do not proceed to analysis until the researcher responds.**
+
+Present your framework selection for researcher review:
+
+```
+FRAMEWORK SELECTION
+  Corpus/text: [name or path]
+  Genre/register: [identified genre(s)]
+
+  Proposed frameworks:
+    - [Framework 1] — [1-sentence rationale]
+    - [Framework 2] — [1-sentence rationale]
+
+  [For mixed corpora only]:
+  Per-cluster options available:
+    - [Cluster name] → [alternative framework(s)]
+  Want a per-cluster pass in addition to corpus-level analysis?
+
+  Proceed, or redirect?
+```
+
+Wait for researcher response before loading frameworks or running Step 6. If the researcher says "proceed" or equivalent, continue. If they redirect, update framework selection and confirm again before proceeding.
+
+**Exception:** If the researcher explicitly specified frameworks in their original invocation ("Fairclough this", "focus on appraisal"), skip this gate — their instruction is the confirmation.
 
 ### Step 6: Analyze
 
@@ -85,7 +133,9 @@ Apply the loaded frameworks to the text, informed by the quantitative profile. O
 - After findings: patterns (what's consistent), anomalies (where the text breaks its own patterns), absences (what genre conventions would predict but isn't there)
 - If Fairclough is active: discursive practice (production, distribution, consumption, intertextuality) and social practice (what relations does this discourse reproduce?)
 
-**Granularity control for standard analysis:** You cannot code every clause in a long text. For standard analysis, identify the 3-5 most significant patterns and provide clause-level evidence for each. Sample broadly (don't just analyze the first three paragraphs), and note where you sampled from. For deep analysis, the researcher directs which passages get full clause-level treatment.
+**Granularity control for standard analysis:** You cannot code every clause in a long text. For standard analysis, identify the 3-5 most significant patterns AND, for corpus mode, which texts break each pattern — convergence and divergence are both findings. Provide clause-level evidence for each pattern. Sample broadly (don't just analyze the first three paragraphs), and note where you sampled from. For deep analysis, the researcher directs which passages get full clause-level treatment.
+
+**Corpus divergence pass (corpus mode only):** After identifying cross-corpus patterns, explicitly run a divergence pass: for each pattern, ask "which texts break this pattern, and how?" Use `outlier_summary` from the quantitative profile as a starting point, but don't limit divergence to flagged outliers — a text can be analytically divergent without triggering the z-score threshold. A corpus where all texts show the same pattern is itself a finding (narrow discourse range); state it as one. The divergence pass should appear as a dedicated section in the report, not folded into individual findings.
 
 **Framework sovereignty (adapted from Reframe's tension navigation system):** Each framework maintains its own analytical authority. When multiple frameworks are active:
 
